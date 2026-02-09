@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   // 👇 AJOUTEZ CETTE PARTIE "SERVER" 👇
   server: {
+    allowedHosts: ['episteme.maquette.io'],
     proxy: {
       // Cela crée un tunnel : quand on appelle /api/scholar, 
       // Vite redirige la demande vers Semantic Scholar sans problème de CORS.

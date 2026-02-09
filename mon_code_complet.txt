@@ -1,0 +1,2123 @@
+
+--- FICHIER: src/Context/AuthContext.jsx ---
+
+import React, { createContext, useState, useEffect, useContext } from 'react';
+import { supabase } from '../supabaseClient';
+
+const AuthContext = createContext();
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // 1. Vérifier la session actuelle au démarrage
+    const getSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user ?? null);
+      setLoading(false);
+    };
+
+    getSession();
+
+    // 2. Écouter les changements (Connexion, Déconnexion)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Fonctions d'action
+  const signUp = (email, password) => supabase.auth.signUp({ email, password });
+  const signIn = (email, password) => supabase.auth.signInWithPassword({ email, password });
+  const signOut = () => supabase.auth.signOut();
+
+  return (
+    <AuthContext.Provider value={{ user, signUp, signIn, signOut, loading }}>
+      {!loading && children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => useContext(AuthContext);
+--- FICHIER: src/Context/AppContext.jsx ---
+
+import React, { createContext, useState, useContext, useEffect } from 'react';
+import { extractTextFromPDF } from '../Services/fileService';
+// Assure-toi que findSimilarArticles est bien exporté dans ton openaiService
+import { analyzeArticleWithAI, findSimilarArticles } from '../Services/openaiService';
+import { supabase } from '../supabaseClient';
+
+const AppContext = createContext();
+
+export const AppProvider = ({ children }) => {
+  const [articles, setArticles] = useState([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [loadingInitial, setLoadingInitial] = useState(true);
+
+  // --- GESTION DU MODE SOMBRE ---
+  const [darkMode, setDarkMode] = useState(() => {
+    const savedTheme = localStorage.getItem('theme');
+    return savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  });
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [darkMode]);
+
+  const toggleTheme = () => setDarkMode(!darkMode);
+
+  // --- 1. CHARGEMENT INITIAL (Depuis Supabase) ---
+  useEffect(() => {
+    const fetchArticles = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('articles')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        // On formate les données pour l'application
+        const formattedData = data.map(article => ({
+          ...article,
+          // Compatibilité structure
+          detailed_analysis: { explanatory_sections: article.explanatory_sections }, 
+          // URL publique pour le PDF
+          fileUrl: supabase.storage.from('pdfs').getPublicUrl(article.file_path).data.publicUrl
+        }));
+
+        setArticles(formattedData);
+      } catch (error) {
+        console.error('Erreur chargement Supabase:', error.message);
+      } finally {
+        setLoadingInitial(false);
+      }
+    };
+
+    fetchArticles();
+  }, []);
+
+  // --- 2. PROCESSUS D'UPLOAD COMPLET ---
+  const processNewArticle = async (file) => {
+    setIsAnalyzing(true);
+    try {
+      // A. Lecture du fichier
+      console.log("1. Lecture du PDF...");
+      const text = await extractTextFromPDF(file);
+      
+      // B. Analyse IA (Résumé + Cours)
+      console.log("2. Analyse IA...");
+      const metadata = await analyzeArticleWithAI(text);
+
+      // C. Recherche d'articles similaires (NOUVEAU)
+      console.log("2b. Recherche d'articles similaires...");
+      const suggestions = await findSimilarArticles(metadata.title);
+      
+      // D. Upload du PDF vers Supabase Storage
+      console.log("3. Upload du fichier vers Supabase Storage...");
+      const cleanName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+      const fileName = `${Date.now()}_${cleanName}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('pdfs')
+        .upload(fileName, file);
+
+      if (uploadError) throw new Error("Erreur upload fichier : " + uploadError.message);
+
+      // E. Sauvegarde des métadonnées dans la Table Supabase
+      console.log("4. Sauvegarde en Base de Données...");
+      const { data: insertedData, error: dbError } = await supabase
+        .from('articles')
+        .insert([
+          {
+            title: metadata.title,
+            authors: metadata.authors,
+            year: metadata.year,
+            domain: metadata.domain,
+            summary: metadata.summary,
+            full_text: text, 
+            explanatory_sections: metadata.explanatory_sections,
+            file_path: fileName,
+            recommendations: suggestions // On sauvegarde les suggestions ici
+          }
+        ])
+        .select();
+
+      if (dbError) throw new Error("Erreur base de données : " + dbError.message);
+
+      // F. Mise à jour de l'affichage local instantanée
+      const newArticleFromDb = insertedData[0];
+      const newArticleForState = {
+        ...newArticleFromDb,
+        detailed_analysis: { explanatory_sections: newArticleFromDb.explanatory_sections },
+        fileUrl: supabase.storage.from('pdfs').getPublicUrl(fileName).data.publicUrl
+      };
+
+      setArticles(prev => [newArticleForState, ...prev]);
+      return newArticleForState;
+
+    } catch (error) {
+      console.error(error);
+      alert(`❌ ERREUR : ${error.message}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  return (
+    <AppContext.Provider value={{ articles, setArticles, processNewArticle, isAnalyzing, loadingInitial, darkMode, toggleTheme }}>
+      {children}
+    </AppContext.Provider>
+  );
+};
+
+export const useApp = () => useContext(AppContext);
+--- FICHIER: src/App.css ---
+
+
+--- FICHIER: src/index.css ---
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+--- FICHIER: src/Components/Layout.jsx ---
+
+import React from 'react';
+import { Outlet, Link, useLocation } from 'react-router-dom';
+import { BookOpen, Compass, Layout as LayoutIcon } from 'lucide-react';
+
+const Layout = () => {
+  const location = useLocation();
+
+  const isActive = (path) => {
+    return location.pathname === path ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-50';
+  };
+
+  return (
+    <div className="min-h-screen bg-white font-sans text-slate-900">
+      <header className="border-b border-gray-100 sticky top-0 bg-white/80 backdrop-blur-md z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <Link to="/" className="flex items-center gap-2">
+            <div className="bg-purple-600 text-white p-1.5 rounded-lg">
+              <span className="font-bold text-lg">ε</span>
+            </div>
+            <span className="font-bold text-xl tracking-tight">Épistémé</span>
+          </Link>
+
+          <nav className="flex items-center gap-2">
+            <Link to="/" className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isActive('/')}`}>
+              <LayoutIcon size={18} />
+              Accueil
+            </Link>
+            <Link to="/library" className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isActive('/library')}`}>
+              <BookOpen size={18} />
+              Bibliothèque
+            </Link>
+            <Link to="/explore" className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isActive('/explore')}`}>
+              <Compass size={18} />
+              Explorer
+            </Link>
+          </nav>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Outlet />
+      </main>
+    </div>
+  );
+};
+
+export default Layout;
+--- FICHIER: src/Components/Timeline.jsx ---
+
+import React from 'react';
+import { GitCommit, GitPullRequest, GitMerge, CheckCircle, FileText, ExternalLink, Lock } from 'lucide-react';
+
+const Timeline = ({ events }) => {
+  if (!events || events.length === 0) return null;
+
+  const getTypeStyle = (type) => {
+    switch (type) {
+      case 'Contradiction':
+        return { color: 'text-red-600 dark:text-red-400', bg: 'bg-red-100 dark:bg-red-900/30', icon: GitPullRequest, label: 'Contradiction' };
+      case 'Conciliation':
+        return { color: 'text-green-600 dark:text-green-400', bg: 'bg-green-100 dark:bg-green-900/30', icon: GitMerge, label: 'Conciliation' };
+      default:
+        return { color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-100 dark:bg-blue-900/30', icon: GitCommit, label: 'Découverte' };
+    }
+  };
+
+  return (
+    <div className="relative border-l-2 border-gray-200 dark:border-slate-800 ml-4 md:ml-6 my-8 space-y-8 transition-colors">
+      {events.map((event, index) => {
+        const style = getTypeStyle(event.type);
+        const Icon = style.icon;
+
+        return (
+          <div key={index} className="relative pl-8 md:pl-12 group animate-in fade-in slide-in-from-bottom-4 duration-700" style={{ animationDelay: `${index * 150}ms`, animationFillMode: 'backwards' }}>
+            {/* Point sur la ligne */}
+            <div className={`absolute -left-[9px] top-0 w-4 h-4 rounded-full border-2 border-white dark:border-slate-900 shadow-sm ${style.bg.replace('100', '500').replace('/30', '')}`}></div>
+
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-bold text-gray-400 dark:text-slate-500">{event.year}</span>
+                <span className={`text-xs px-2 py-1 rounded-full font-medium flex items-center gap-1 ${style.bg} ${style.color}`}>
+                  <Icon size={12} />
+                  {style.label}
+                </span>
+              </div>
+              
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1 transition-colors">{event.title}</h3>
+              <p className="text-sm text-purple-600 dark:text-purple-400 font-medium mb-3">{event.author}</p>
+              
+              <p className="text-gray-600 dark:text-slate-300 text-sm leading-relaxed mb-4 transition-colors">
+                {event.description}
+              </p>
+
+              {/* BOUTONS D'ACTION */}
+              <div className="flex flex-wrap gap-3 mt-4 pt-4 border-t border-gray-50 dark:border-slate-700">
+                
+                {event.pdfUrl ? (
+                  <a 
+                    href={event.pdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 text-xs font-bold hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+                  >
+                    <FileText size={14} />
+                    PDF Complet
+                  </a>
+                ) : (
+                  <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-50 dark:bg-slate-700 text-gray-400 dark:text-slate-500 text-xs font-medium cursor-not-allowed">
+                    <Lock size={14} />
+                    PDF non dispo
+                  </span>
+                )}
+
+                <a 
+                  href={event.semanticUrl || `https://scholar.google.com/scholar?q=${encodeURIComponent(event.title)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                >
+                  <ExternalLink size={14} />
+                  Voir la source
+                </a>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      
+      <div className="relative pl-8 md:pl-12">
+        <div className="absolute -left-[11px] top-0 p-1 bg-gray-100 dark:bg-slate-800 rounded-full text-gray-400 dark:text-slate-500">
+          <CheckCircle size={14} />
+        </div>
+        <p className="text-sm text-gray-400 dark:text-slate-500 italic">Fin de la timeline</p>
+      </div>
+    </div>
+  );
+};
+
+export default Timeline;
+--- FICHIER: src/Components/UserNotRegisteredError.jsx ---
+
+
+--- FICHIER: src/Components/Sidebar.jsx ---
+
+import React from 'react';
+import { NavLink } from 'react-router-dom';
+import { Home, BookOpen, Compass, Moon, Sun } from 'lucide-react'; // Ajout Moon, Sun
+import { useApp } from '../Context/AppContext'; // Import du contexte
+
+const Sidebar = () => {
+  const { toggleTheme, darkMode } = useApp(); // On récupère la fonction
+
+  const navItems = [
+    { to: "/", icon: Home, label: "Accueil" },
+    { to: "/library", icon: BookOpen, label: "Bibliothèque" },
+    { to: "/explorer", icon: Compass, label: "Explorer" },
+  ];
+
+  return (
+    // Ajout de dark:bg-slate-900 et dark:border-slate-800
+    <aside className="hidden md:flex w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 h-screen flex-col sticky top-0 left-0 z-50 transition-colors duration-300">
+      
+      {/* LOGO */}
+      <div className="p-8 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-purple-600 rounded-xl flex items-center justify-center shadow-sm text-white">
+            <span className="font-sans font-bold text-3xl pb-1 leading-none">ε</span>
+          </div>
+          {/* Texte adaptatif */}
+          <span className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+            Épistémé
+          </span>
+        </div>
+      </div>
+
+      {/* Navigation */}
+      <nav className="flex-1 px-4 space-y-2 mt-4">
+        {navItems.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-200 group ${
+                isActive
+                  ? "bg-purple-50 text-purple-700 font-bold shadow-sm ring-1 ring-purple-100 dark:bg-slate-800 dark:text-purple-400 dark:ring-slate-700"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-900 font-medium dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              }`
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <item.icon 
+                  size={20} 
+                  className={`transition-colors ${isActive ? 'text-purple-600 dark:text-purple-400' : 'text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300'}`} 
+                />
+                <span>{item.label}</span>
+                {isActive && (
+                  <div className="ml-auto w-1.5 h-1.5 rounded-full bg-purple-600 dark:bg-purple-400"></div>
+                )}
+              </>
+            )}
+          </NavLink>
+        ))}
+      </nav>
+
+      {/* Footer avec BOUTON DARK MODE */}
+      <div className="p-4 border-t border-gray-100 dark:border-slate-800">
+        
+        <button 
+          onClick={toggleTheme}
+          className="w-full flex items-center justify-between px-4 py-3 mb-2 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+        >
+          <span className="text-sm font-bold flex items-center gap-2">
+            {darkMode ? <Moon size={16} /> : <Sun size={16} />}
+            {darkMode ? "Mode Nuit" : "Mode Jour"}
+          </span>
+          
+          {/* Petit switch visuel */}
+          <div className={`w-8 h-4 rounded-full relative transition-colors ${darkMode ? 'bg-purple-600' : 'bg-slate-300'}`}>
+            <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all duration-300 ${darkMode ? 'left-4.5' : 'left-0.5'}`}></div>
+          </div>
+        </button>
+
+        <div className="px-4 py-2 text-xs text-slate-400 text-center font-medium">
+          v2.6 • IA Powered
+        </div>
+      </div>
+    </aside>
+  );
+};
+
+export default Sidebar;
+--- FICHIER: src/Components/ArticleCard.jsx ---
+
+import React from 'react';
+import { FileText, ArrowRight, Calendar } from 'lucide-react';
+import { Link } from 'react-router-dom';
+
+const ArticleCard = ({ article }) => {
+  // Données par défaut si l'article est vide (pour éviter les crashs)
+  const { 
+    id = 1, 
+    title = "Titre inconnu", 
+    authors = [], 
+    domain = "Général", 
+    year = "2024", 
+    summary = "Pas de résumé disponible." 
+  } = article || {};
+
+  return (
+    <Link to={`/article/${id}`} className="block group">
+      <div className="bg-white border border-gray-100 rounded-2xl p-6 hover:shadow-lg transition-all duration-300 hover:border-purple-100 cursor-pointer">
+        <div className="flex items-start justify-between gap-4">
+          
+          {/* Icône et Contenu */}
+          <div className="flex gap-4">
+            <div className="p-3 bg-gray-50 rounded-xl group-hover:bg-purple-50 transition-colors h-fit">
+              <FileText className="text-gray-400 group-hover:text-purple-600 transition-colors" size={24} />
+            </div>
+            
+            <div className="space-y-2">
+              <h3 className="font-bold text-lg text-slate-900 group-hover:text-purple-700 transition-colors">
+                {title}
+              </h3>
+              
+              <p className="text-sm text-gray-500">
+                {authors.join(', ')}
+              </p>
+
+              <div className="flex items-center gap-3 mt-2">
+                <span className="px-2.5 py-1 rounded-md bg-purple-100 text-purple-700 text-xs font-medium">
+                  {domain}
+                </span>
+                <div className="flex items-center gap-1 text-gray-400 text-xs">
+                  <Calendar size={12} />
+                  <span>{year}</span>
+                </div>
+              </div>
+
+              <p className="text-sm text-gray-600 line-clamp-2 mt-3 leading-relaxed">
+                {summary}
+              </p>
+            </div>
+          </div>
+
+          {/* Flèche à droite */}
+          <ArrowRight className="text-gray-300 group-hover:text-purple-600 transform group-hover:translate-x-1 transition-all" size={20} />
+        </div>
+      </div>
+    </Link>
+  );
+};
+
+export default ArticleCard;
+--- FICHIER: src/Components/PageTransition.jsx ---
+
+import React from 'react';
+import { motion } from 'framer-motion';
+
+const animations = {
+  // DÉPART : Légèrement en bas, invisible
+  initial: { opacity: 0, y: 20 }, 
+  
+  // ARRIVÉE : Position normale, visible
+  animate: { opacity: 1, y: 0 },  
+  
+  // SORTIE : Légèrement vers le haut, invisible (accélérée)
+  exit: { opacity: 0, y: -20 }    
+};
+
+const PageTransition = ({ children }) => {
+  return (
+    <motion.div
+      variants={animations}
+      initial="initial"
+      animate="animate"
+      exit="exit"
+      transition={{ 
+        type: "spring",
+        stiffness: 400, // Beaucoup plus rapide (C'était 200 avant)
+        damping: 35,    // Freinage sec pour éviter que ça rebondisse trop longtemps
+        mass: 0.5       // Plus léger = démarre plus vite
+      }}
+      className="w-full h-full"
+    >
+      {children}
+    </motion.div>
+  );
+};
+
+export default PageTransition;
+--- FICHIER: src/Components/ScrollToTop.jsx ---
+
+import { useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
+
+const ScrollToTop = () => {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    // Force le scroll tout en haut (0, 0) instantanément
+    window.scrollTo({
+      top: 0,
+      left: 0,
+      behavior: "instant" // Important pour éviter l'effet de défilement lent
+    });
+  }, [pathname]); // Se déclenche à chaque fois que l'URL change
+
+  return null; // Ce composant n'affiche rien visuellement
+};
+
+export default ScrollToTop;
+--- FICHIER: src/Components/SearchBar.jsx ---
+
+import React from 'react';
+import { Search } from 'lucide-react';
+
+const SearchBar = ({ value, onChange, placeholder = "Rechercher..." }) => {
+  return (
+    <div className="relative w-full">
+      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+        <Search className="text-gray-400" size={20} />
+      </div>
+      <input
+        type="text"
+        className="block w-full pl-11 pr-4 py-3 bg-white border border-gray-200 rounded-xl leading-5 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all shadow-sm"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  );
+};
+
+export default SearchBar;
+--- FICHIER: src/Components/DomainFilter.jsx ---
+
+import React from 'react';
+import { 
+  Atom, Beaker, Dna, Stethoscope, Laptop, 
+  Calculator, Users, Brain, TrendingUp, Leaf, Wrench, MoreHorizontal 
+} from 'lucide-react';
+
+const icons = {
+  "Physique": Atom,
+  "Chimie": Beaker,
+  "Biologie": Dna,
+  "Médecine": Stethoscope,
+  "Informatique": Laptop,
+  "Mathématiques": Calculator,
+  "Sciences sociales": Users,
+  "Psychologie": Brain,
+  "Économie": TrendingUp,
+  "Environnement": Leaf,
+  "Ingénierie": Wrench,
+  "Autre": MoreHorizontal
+};
+
+const DomainFilter = ({ selectedDomain, onSelectDomain }) => {
+  const domains = ["Tous", ...Object.keys(icons)];
+
+  return (
+    <div className="flex flex-wrap gap-2 py-4">
+      {domains.map((domain) => {
+        const Icon = icons[domain];
+        const isSelected = selectedDomain === domain;
+        
+        return (
+          <button
+            key={domain}
+            onClick={() => onSelectDomain(domain)}
+            className={`
+              flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all
+              ${isSelected 
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-200' 
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}
+            `}
+          >
+            {Icon && <Icon size={16} />}
+            {domain}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+export default DomainFilter;
+--- FICHIER: src/main.jsx ---
+
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App.jsx';
+import './index.css';
+import { BrowserRouter } from 'react-router-dom';
+import { AppProvider } from './Context/AppContext'; // <--- IMPORT IMPORTANT
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <BrowserRouter>
+      {/* 👇 C'EST ÇA QUI MANQUE SÛREMENT 👇 */}
+      <AppProvider> 
+        <App />
+      </AppProvider>
+      {/* 👆 FIN DU PROVIDER 👆 */}
+    </BrowserRouter>
+  </React.StrictMode>,
+);
+--- FICHIER: src/App.jsx ---
+
+import React from 'react';
+import { Routes, Route, useLocation } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
+
+import Home from './Pages/Home';
+import Library from './Pages/Library';
+import ArticleDetail from './Pages/ArticleDetail';
+import Explorer from './Pages/Explorer';
+import Sidebar from './Components/Sidebar';
+
+function App() {
+  const location = useLocation();
+
+  return (
+    // AJOUT : dark:bg-slate-950 dark:text-slate-200 transition-colors
+    <div className="flex bg-slate-50 min-h-screen dark:bg-slate-950 dark:text-slate-200 transition-colors duration-300">
+      
+      <Sidebar />
+
+      <div className="flex-1 p-8 overflow-hidden">
+        <AnimatePresence mode="wait">
+          <Routes location={location} key={location.pathname}>
+            <Route path="/" element={<Home />} />
+            <Route path="/library" element={<Library />} />
+            <Route path="/article/:id" element={<ArticleDetail />} />
+            <Route path="/explorer" element={<Explorer />} />
+          </Routes>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+export default App;
+--- FICHIER: src/supabaseClient.js ---
+
+import { createClient } from '@supabase/supabase-js';
+
+// On force les variables en string pour éviter les bugs si le .env est mal lu
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.toString();
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.toString();
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error("ERREUR : Les clés Supabase sont manquantes dans le fichier .env");
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+--- FICHIER: src/Data/featuredArticles.js ---
+
+// src/Data/featuredArticles.js
+
+export const featuredArticles = [
+  {
+    category: "Intelligence Artificielle",
+    articles: [
+      {
+        id: "feat-ai-1",
+        title: "Attention Is All You Need",
+        authors: ["Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "et al."],
+        year: "2017",
+        domain: "Informatique",
+        summary: "C'est l'article fondateur qui a tout changé. Il présente l'architecture 'Transformer', la technologie qui a permis la création de ChatGPT, Claude et Gemini. L'idée clé est le mécanisme d'attention : la machine apprend à se concentrer sur les mots importants d'une phrase, peu importe leur distance.",
+        pdfUrl: "https://arxiv.org/pdf/1706.03762.pdf",
+        detailed_analysis: {
+          explanatory_sections: [
+            {
+              title: "1. Le Problème des Anciens Modèles",
+              content: "Avant 2017, pour traduire une phrase, les IA la lisaient mot à mot (RNN). Problème : arrivé à la fin d'une longue phrase, l'IA oubliait le début. C'était lent et impossible à paralléliser."
+            },
+            {
+              title: "2. La Révolution : L'Attention",
+              content: "Les auteurs proposent de jeter les réseaux récurrents. À la place, le modèle regarde TOUS les mots de la phrase en même temps et calcule un score d'importance ('attention') entre chaque paire de mots. Le mot 'Banque' est-il lié à 'Rivière' ou 'Argent' ? Le contexte décide instantanément."
+            },
+            {
+              title: "3. Architecture Transformer",
+              content: "Le modèle est composé d'encodeurs (qui lisent) et de décodeurs (qui génèrent). C'est cette architecture qui est aujourd'hui la brique de base de tous les grands modèles de langage (LLM)."
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    category: "Biologie & Génétique",
+    articles: [
+      {
+        id: "feat-bio-1",
+        title: "A Programmable Dual-RNA-Guided DNA Endonuclease in Adaptive Bacterial Immunity",
+        authors: ["M. Jinek", "E. Charpentier", "J. Doudna", "et al."],
+        year: "2012",
+        domain: "Biologie",
+        summary: "L'article historique qui a révélé CRISPR-Cas9 au monde. Emmanuelle Charpentier et Jennifer Doudna décrivent comment transformer un système immunitaire de bactérie en un 'ciseau génétique' programmable capable de couper et modifier l'ADN à volonté.",
+        pdfUrl: "https://www.science.org/doi/pdf/10.1126/science.1225829",
+        detailed_analysis: {
+          explanatory_sections: [
+            {
+              title: "1. Le Système Immunitaire Bactérien",
+              content: "Les bactéries se défendent contre les virus en gardant des morceaux de leur ADN en mémoire (dans une zone appelée CRISPR). C'est comme un album photo des agresseurs."
+            },
+            {
+              title: "2. Cas9 : Le Ciseau Moléculaire",
+              content: "Les chercheuses ont découvert une protéine, Cas9, qui utilise ces 'photos' pour aller couper l'ADN des virus envahisseurs. Si l'ADN correspond à la photo, Cas9 coupe."
+            },
+            {
+              title: "3. La Programmation",
+              content: "La percée majeure de cet article est de montrer qu'on peut fabriquer artificiellement ce 'guide'. On peut donc dire à Cas9 d'aller couper n'importe quel gène, chez n'importe quel être vivant. C'est la naissance de l'édition génomique moderne."
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    category: "Astrophysique",
+    articles: [
+      {
+        id: "feat-space-1",
+        title: "First M87 Event Horizon Telescope Results. I. The Shadow of the Supermassive Black Hole",
+        authors: ["The EHT Collaboration"],
+        year: "2019",
+        domain: "Physique",
+        summary: "Pour la première fois de l'histoire, l'humanité a vu un trou noir. Cet article présente l'image historique du trou noir supermassif au centre de la galaxie M87, prouvant visuellement l'existence de l'horizon des événements prédit par Einstein.",
+        pdfUrl: "https://iopscience.iop.org/article/10.3847/2041-8213/ab0ec7/pdf",
+        detailed_analysis: {
+          explanatory_sections: [
+            {
+              title: "1. Un Télescope de la Taille de la Terre",
+              content: "Aucun télescope n'était assez puissant seul. Les scientifiques ont synchronisé 8 radiotélescopes répartis sur toute la planète (Hawaï, Chili, Antarctique...) pour créer un télescope virtuel géant grâce à l'interférométrie."
+            },
+            {
+              title: "2. L'Anneau de Feu",
+              content: "L'image montre un anneau brillant entourant une zone sombre centrale. La lumière vient du gaz chauffé à des milliards de degrés qui tombe dans le trou noir. La zone sombre centrale est l'ombre du trou noir, d'où la lumière ne peut plus s'échapper."
+            },
+            {
+              title: "3. Confirmation d'Einstein",
+              content: "La forme de l'anneau est quasi parfaitement circulaire, exactement comme le prédisait la Relativité Générale d'Einstein dans des conditions de gravité extrême. C'est une confirmation éclatante de la théorie, 100 ans après."
+            }
+          ]
+        }
+      }
+    ]
+  }
+];
+--- FICHIER: src/Pages/Profile.jsx ---
+
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../Context/AuthContext';
+import { supabase } from '../supabaseClient';
+import { 
+  User, Heart, Layers, LogOut, FileText, 
+  Calendar, ArrowRight, FolderOpen, Mail 
+} from 'lucide-react';
+import PageTransition from '../Components/PageTransition';
+import { motion, AnimatePresence } from 'framer-motion';
+
+// --- COMPOSANT CARTE (Réutilisé pour la cohérence) ---
+const ArticleCard = ({ article }) => (
+  <div className="group bg-white dark:bg-slate-800 rounded-xl p-5 border border-gray-100 dark:border-slate-700 hover:shadow-xl transition-all flex flex-col justify-between h-full">
+    <div>
+      <div className="flex justify-between items-start mb-3">
+        <div className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 text-purple-600 dark:text-blue-300 p-2.5 rounded-xl">
+          <FileText size={20} className="text-purple-600 dark:text-blue-400" />
+        </div>
+      </div>
+      <Link to={`/article/${article.id}`} className="block">
+        <h3 className="font-bold text-lg text-slate-800 dark:text-slate-100 mb-2 line-clamp-2 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-purple-600 group-hover:to-blue-600 transition-colors">
+          {article.title}
+        </h3>
+        <div className="flex flex-wrap gap-2 text-xs text-slate-500 dark:text-slate-400 mb-4">
+           <span className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-1 rounded-md font-bold">
+             {article.domain}
+           </span>
+           <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded-md">
+             <Calendar size={12} /> {article.year}
+           </span>
+        </div>
+      </Link>
+    </div>
+    <Link to={`/article/${article.id}`} className="mt-4 flex items-center gap-2 text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-80">
+      Relire <ArrowRight size={14} className="text-purple-600" />
+    </Link>
+  </div>
+);
+
+const Profile = () => {
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
+
+  const [activeTab, setActiveTab] = useState('favorites'); // 'favorites' | 'playlists'
+  const [favorites, setFavorites] = useState([]);
+  const [playlists, setPlaylists] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Filtres Catégories
+  const [selectedCategory, setSelectedCategory] = useState('Tous');
+  const CATEGORIES = [
+    "Tous", "Informatique", "Physique", "Biologie", "Médecine", 
+    "Mathématiques", "Sciences Sociales", "Économie", "Histoire", 
+    "Environnement", "Ingénierie", "Psychologie", "Philosophie"
+  ];
+
+  useEffect(() => {
+    if (!user) {
+      navigate('/auth');
+      return;
+    }
+
+    const fetchData = async () => {
+      setLoading(true);
+      const [favData, listData] = await Promise.all([
+        supabase.from('favorites').select('article_id, articles(*)').eq('user_id', user.id),
+        supabase.from('playlists').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
+      ]);
+
+      if (favData.data) setFavorites(favData.data.map(f => f.articles).filter(Boolean));
+      if (listData.data) setPlaylists(listData.data);
+      
+      setLoading(false);
+    };
+    fetchData();
+  }, [user, navigate]);
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate('/auth');
+  };
+
+  const filterList = (list) => {
+    if (selectedCategory === 'Tous') return list;
+    return list.filter(a => (a.domain || 'Non classé') === selectedCategory);
+  };
+
+  const contentVariants = {
+    hidden: { opacity: 0, y: 10 },
+    visible: { opacity: 1, y: 0 },
+    exit: { opacity: 0, y: -10 }
+  };
+
+  if (loading) return <div className="flex justify-center h-[50vh] items-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div></div>;
+
+  return (
+    <PageTransition>
+      <div className="max-w-5xl mx-auto pt-8 px-4 md:px-0 pb-20">
+        
+        {/* --- HEADER PROFIL --- */}
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 border border-gray-100 dark:border-slate-800 shadow-sm mb-12 flex flex-col md:flex-row items-center md:items-start gap-8">
+          
+          {/* Avatar Géant */}
+          <div className="w-24 h-24 md:w-32 md:h-32 rounded-full bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center text-white shadow-xl shadow-purple-200 dark:shadow-none flex-shrink-0">
+             <span className="text-4xl font-bold">{user.email.charAt(0).toUpperCase()}</span>
+          </div>
+
+          <div className="flex-1 text-center md:text-left">
+            <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white mb-2">Mon Profil</h1>
+            <div className="flex items-center justify-center md:justify-start gap-2 text-slate-500 dark:text-slate-400 mb-6 font-medium">
+              <Mail size={16} /> {user.email}
+            </div>
+
+            {/* Stats */}
+            <div className="flex gap-4 justify-center md:justify-start">
+               <div className="px-4 py-2 bg-slate-50 dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700">
+                 <span className="block text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600">{favorites.length}</span>
+                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">Favoris</span>
+               </div>
+               <div className="px-4 py-2 bg-slate-50 dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700">
+                 <span className="block text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600">{playlists.length}</span>
+                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">Collections</span>
+               </div>
+            </div>
+          </div>
+
+          <button 
+            onClick={handleLogout}
+            className="px-6 py-3 rounded-xl border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400 font-bold hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2"
+          >
+            <LogOut size={18} /> Déconnexion
+          </button>
+        </div>
+
+        {/* --- ONGLETS --- */}
+        <div className="flex justify-center mb-8">
+           <div className="bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl inline-flex relative">
+              {[
+                { id: 'favorites', label: 'Mes Favoris', icon: Heart },
+                { id: 'playlists', label: 'Mes Collections', icon: Layers },
+              ].map(tab => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className="relative px-6 py-2.5 rounded-lg text-sm font-bold transition-all z-10"
+                  >
+                    <span className={`relative z-10 flex items-center gap-2 ${isActive ? 'text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600' : 'text-slate-500 dark:text-slate-400'}`}>
+                      <tab.icon size={16} className={isActive ? "text-purple-600" : ""} /> {tab.label}
+                    </span>
+                    {isActive && (
+                      <motion.div layoutId="profileTab" className="absolute inset-0 bg-white dark:bg-slate-700 rounded-lg shadow-sm z-0" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                    )}
+                  </button>
+                )
+              })}
+           </div>
+        </div>
+
+        {/* --- CONTENU --- */}
+        <div className="min-h-[400px]">
+          <AnimatePresence mode="wait">
+            
+            {/* VUE FAVORIS (Avec filtres) */}
+            {activeTab === 'favorites' && (
+              <motion.div key="favs" variants={contentVariants} initial="hidden" animate="visible" exit="exit" transition={{ duration: 0.2 }}>
+                
+                {/* Filtres Rubriques */}
+                <div className="flex flex-wrap gap-2 mb-8 justify-center">
+                  {CATEGORIES.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`
+                        px-3 py-1.5 rounded-full text-xs font-bold transition-all border
+                        ${selectedCategory === cat 
+                          ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white border-transparent shadow-md' 
+                          : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-gray-200 dark:border-slate-700 hover:border-purple-300'}
+                      `}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+
+                {favorites.length === 0 ? (
+                  <div className="text-center py-20 text-slate-400">Aucun favori pour le moment.</div>
+                ) : (
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {filterList(favorites).map(article => (
+                      <ArticleCard key={article.id} article={article} />
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* VUE COLLECTIONS */}
+            {activeTab === 'playlists' && (
+              <motion.div key="lists" variants={contentVariants} initial="hidden" animate="visible" exit="exit" transition={{ duration: 0.2 }}>
+                 {playlists.length === 0 ? (
+                    <div className="text-center py-20 text-slate-400">Aucune collection créée.</div>
+                 ) : (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {playlists.map(list => (
+                        <div key={list.id} className="bg-gradient-to-br from-white to-purple-50 dark:from-slate-800 dark:to-slate-900 p-6 rounded-2xl border border-purple-100 dark:border-slate-700 hover:shadow-lg transition-all group relative">
+                          <div className="w-12 h-12 bg-gradient-to-br from-purple-200 to-blue-200 dark:from-slate-700 dark:to-slate-600 rounded-xl flex items-center justify-center text-purple-700 dark:text-purple-300 mb-4">
+                             <FolderOpen size={24} />
+                          </div>
+                          <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1">{list.title}</h3>
+                          <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Créée le {new Date(list.created_at).toLocaleDateString()}</p>
+                          <Link to={`/playlist/${list.id}`} className="inline-flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-700 rounded-lg text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600 shadow-sm hover:shadow transition-all border border-gray-100 dark:border-slate-600">
+                            Ouvrir le dossier <ArrowRight size={14} className="text-purple-600" />
+                          </Link>
+                        </div>
+                      ))}
+                    </div>
+                 )}
+              </motion.div>
+            )}
+
+          </AnimatePresence>
+        </div>
+
+      </div>
+    </PageTransition>
+  );
+};
+
+export default Profile;
+--- FICHIER: src/Pages/PlaylistDetail.jsx ---
+
+import React, { useState, useEffect } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { supabase } from '../supabaseClient';
+import { ArrowLeft, Trash2, FileText, Calendar, ArrowRight, FolderOpen } from 'lucide-react';
+import PageTransition from '../Components/PageTransition';
+
+const PlaylistDetail = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
+
+  const [playlist, setPlaylist] = useState(null);
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchPlaylistDetails();
+  }, [id]);
+
+  const fetchPlaylistDetails = async () => {
+    setLoading(true);
+    
+    // 1. Infos Playlist
+    const { data: playlistData, error } = await supabase
+      .from('playlists')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !playlistData) {
+      navigate('/library');
+      return;
+    }
+    setPlaylist(playlistData);
+
+    // 2. Articles
+    const { data: itemsData } = await supabase
+      .from('playlist_items')
+      .select('id, added_at, articles(*)') 
+      .eq('playlist_id', id)
+      .order('added_at', { ascending: false });
+
+    if (itemsData) {
+      setItems(itemsData.map(i => ({ ...i.articles, link_id: i.id })));
+    }
+    
+    setLoading(false);
+  };
+
+  const removeFromPlaylist = async (linkId) => {
+    if (!confirm("Retirer cet article de la collection ?")) return;
+    await supabase.from('playlist_items').delete().eq('id', linkId);
+    setItems(items.filter(item => item.link_id !== linkId));
+  };
+
+  const deleteEntirePlaylist = async () => {
+    if (!confirm("Voulez-vous vraiment supprimer toute cette collection ?")) return;
+    await supabase.from('playlists').delete().eq('id', id);
+    navigate('/library');
+  };
+
+  if (loading) return <div className="flex justify-center h-[50vh] items-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div></div>;
+
+  return (
+    <PageTransition>
+      <div className="max-w-6xl mx-auto pt-8 px-4 md:px-0">
+        
+        {/* Navigation */}
+        <Link to="/library" className="inline-flex items-center gap-2 text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors mb-8 font-medium">
+          <ArrowLeft size={18} /> Retour à la bibliothèque
+        </Link>
+
+        {/* HEADER MODERNE */}
+        <div className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-slate-800 dark:to-slate-900 p-8 rounded-3xl mb-12 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 border border-purple-100 dark:border-slate-700 shadow-sm">
+          <div className="flex items-center gap-5">
+            {/* Icône avec dégradé */}
+            <div className="w-20 h-20 bg-gradient-to-br from-purple-600 to-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-purple-200 dark:shadow-none">
+              <FolderOpen size={36} />
+            </div>
+            <div>
+              <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 dark:text-white mb-2">
+                {playlist.title}
+              </h1>
+              <p className="text-slate-500 dark:text-slate-400 font-medium flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-700 text-xs font-bold border border-gray-100 dark:border-slate-600">
+                  {items.length} article{items.length > 1 ? 's' : ''}
+                </span>
+                <span className="text-sm opacity-60">Créée le {new Date(playlist.created_at).toLocaleDateString()}</span>
+              </p>
+            </div>
+          </div>
+
+          <button 
+            onClick={deleteEntirePlaylist}
+            className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-700 text-red-500 font-bold rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors border border-gray-200 dark:border-slate-600 shadow-sm hover:border-red-200"
+          >
+            <Trash2 size={18} /> Supprimer le dossier
+          </button>
+        </div>
+
+        {/* LISTE DES ARTICLES (DESIGN UNIFIÉ) */}
+        {items.length === 0 ? (
+          <div className="text-center py-20 bg-slate-50 dark:bg-slate-800/50 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-700">
+            <FolderOpen size={48} className="mx-auto text-slate-300 dark:text-slate-600 mb-4" />
+            <p className="text-xl font-bold text-slate-400 mb-6">Ce dossier est vide.</p>
+            <Link to="/explorer" className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-xl font-bold hover:shadow-lg hover:opacity-90 transition-all">
+              Trouver des articles à ajouter
+            </Link>
+          </div>
+        ) : (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 pb-20">
+            {items.map(article => (
+              <div key={article.id} className="group bg-white dark:bg-slate-800 rounded-xl p-5 border border-gray-100 dark:border-slate-700 hover:shadow-xl transition-all flex flex-col justify-between h-full relative animate-in fade-in duration-500">
+                
+                {/* Bouton retirer (X discret) */}
+                <button 
+                  onClick={(e) => { e.preventDefault(); removeFromPlaylist(article.link_id); }}
+                  className="absolute top-4 right-4 text-gray-300 hover:text-red-500 transition-colors p-1.5 bg-white dark:bg-slate-800 rounded-full shadow-sm opacity-0 group-hover:opacity-100 border border-gray-100 dark:border-slate-700 z-10"
+                  title="Retirer du dossier"
+                >
+                  <Trash2 size={14} />
+                </button>
+
+                <div>
+                  <div className="flex justify-between items-start mb-3">
+                    {/* Icône Document avec fond dégradé subtil */}
+                    <div className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 text-purple-600 dark:text-blue-300 p-2.5 rounded-xl">
+                      <FileText size={20} className="text-purple-600 dark:text-blue-400" />
+                    </div>
+                  </div>
+                  
+                  <Link to={`/article/${article.id}`} className="block">
+                    <h3 className="font-bold text-lg text-slate-800 dark:text-slate-100 mb-2 line-clamp-2 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-purple-600 group-hover:to-blue-600 transition-colors">
+                      {article.title}
+                    </h3>
+                    <div className="flex flex-wrap gap-2 text-xs text-slate-500 dark:text-slate-400 mb-4">
+                      <span className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-1 rounded-md font-bold">{article.domain}</span>
+                      <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded-md">
+                        <Calendar size={12} /> {article.year}
+                      </span>
+                    </div>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3">
+                      {article.summary}
+                    </p>
+                  </Link>
+                </div>
+
+                <Link 
+                  to={`/article/${article.id}`}
+                  className="mt-4 flex items-center gap-2 text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-80 transition-opacity"
+                >
+                  Lire l'analyse <ArrowRight size={14} className="text-purple-600" />
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </PageTransition>
+  );
+};
+
+export default PlaylistDetail;
+--- FICHIER: src/Pages/ArticleDetail.jsx ---
+
+import React from 'react';
+import { useParams, Link, useLocation } from 'react-router-dom';
+import { ArrowLeft, Calendar, User, Eye, BookOpen, ExternalLink, FileText, Sparkles } from 'lucide-react';
+import { useApp } from '../Context/AppContext';
+import PageTransition from '../Components/PageTransition';
+
+const ArticleDetail = () => {
+  const { id } = useParams();
+  const { articles, loadingInitial } = useApp();
+  
+  // 1. Récupération de l'article via la navigation (si on vient de l'Explorateur)
+  const location = useLocation();
+  const featuredArticle = location.state?.article;
+
+  // 2. Gestion du chargement
+  // On n'affiche le loader que si on cherche dans la BDD et qu'elle n'est pas prête
+  // Si c'est un article "featured" (déjà chargé localement), on l'affiche direct.
+  if (loadingInitial && !featuredArticle) {
+    return (
+      <div className="flex items-center justify-center h-[50vh]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 dark:border-purple-400"></div>
+      </div>
+    );
+  }
+
+  // 3. SELECTION DE L'ARTICLE
+  // Priorité à l'article passé par la navigation, sinon on cherche dans la liste globale
+  const article = featuredArticle || articles.find(a => a.id.toString() === id);
+
+  // 4. Cas Introuvable
+  if (!article) {
+    return (
+      <PageTransition>
+        <div className="text-center py-20 px-4">
+          <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Article introuvable</h2>
+          <p className="text-gray-500 dark:text-gray-400 mt-2">Cet article n'existe pas ou a été supprimé.</p>
+          <Link to="/library" className="text-purple-600 dark:text-purple-400 hover:underline mt-6 block font-medium">
+            Retour à la bibliothèque
+          </Link>
+        </div>
+      </PageTransition>
+    );
+  }
+
+  // Préparation des données pour l'affichage
+  const sections = article.detailed_analysis?.explanatory_sections || article.explanatory_sections;
+  const recommendations = article.recommendations || [];
+
+  return (
+    <PageTransition>
+      <div className="max-w-4xl mx-auto pb-20 pt-8 px-4 md:px-0">
+        
+        {/* --- BOUTON RETOUR --- */}
+        {/* La destination change selon d'où vient l'utilisateur */}
+        <Link 
+          to={featuredArticle ? "/explorer" : "/library"} 
+          className="inline-flex items-center gap-2 text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors mb-8 font-medium"
+        >
+          <ArrowLeft size={18} />
+          {featuredArticle ? "Retour à l'exploration" : "Retour à la bibliothèque"}
+        </Link>
+
+        {/* --- EN-TÊTE --- */}
+        <header className="mb-12 border-b border-gray-100 dark:border-slate-800 pb-8 transition-colors">
+          <div className="flex flex-wrap gap-3 mb-6">
+            {/* Badge Domaine */}
+            <span className="px-3 py-1 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 rounded-full text-sm font-bold tracking-wide shadow-sm border border-transparent dark:border-purple-800">
+              {article.domain || "Science"}
+            </span>
+            {/* Badge Année */}
+            <span className="px-3 py-1 bg-gray-50 dark:bg-slate-800 text-gray-600 dark:text-slate-300 rounded-full text-sm font-medium border border-gray-100 dark:border-slate-700 flex items-center gap-2">
+              <Calendar size={14} /> {article.year || "N/A"}
+            </span>
+          </div>
+
+          <h1 className="text-3xl md:text-5xl font-extrabold text-slate-900 dark:text-white leading-[1.15] mb-6 transition-colors">
+            {article.title}
+          </h1>
+
+          <div className="flex items-center gap-3 text-lg text-gray-500 dark:text-slate-400">
+             <User size={20} className="text-purple-400" />
+             <p className="font-medium">
+               {Array.isArray(article.authors) ? article.authors.join(', ') : article.authors}
+             </p>
+          </div>
+        </header>
+
+        {/* --- COURS MAGISTRAL (IA) --- */}
+        <div className="space-y-12 animate-slide-up">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="p-3 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-xl text-white shadow-lg shadow-purple-200 dark:shadow-none">
+              <BookOpen size={24} />
+            </div>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white transition-colors">Cours Magistral IA</h2>
+          </div>
+
+          {sections ? (
+            <div className="space-y-12">
+              {sections.map((section, index) => (
+                <section key={index} className="relative pl-0 md:pl-6 group">
+                  {/* Ligne verticale décorative */}
+                  <div className="hidden md:block absolute left-0 top-0 bottom-0 w-1 bg-gray-100 dark:bg-slate-800 rounded-full group-hover:bg-purple-200 dark:group-hover:bg-purple-800 transition-colors"></div>
+                  
+                  <h3 className="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-4 flex items-center gap-3 transition-colors">
+                    <span className="flex items-center justify-center w-8 h-8 rounded-full bg-purple-50 dark:bg-slate-800 text-purple-600 dark:text-purple-400 text-sm font-bold border border-purple-100 dark:border-purple-900/50">
+                      {index + 1}
+                    </span>
+                    {section.title}
+                  </h3>
+                  
+                  <div className="prose prose-lg max-w-none text-slate-600 dark:text-slate-300 leading-relaxed text-justify whitespace-pre-line bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm transition-colors">
+                    {section.content}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            // Fallback si pas de cours généré
+            <div className="p-6 bg-orange-50 dark:bg-orange-900/20 text-orange-800 dark:text-orange-200 rounded-xl border border-orange-100 dark:border-orange-800/50">
+              <p className="font-bold mb-2">Le format détaillé n'est pas disponible pour cet article.</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400"><strong>Résumé :</strong> {article.summary}</p>
+            </div>
+          )}
+        </div>
+
+        {/* --- LECTURES RECOMMANDÉES (Si disponibles) --- */}
+        {recommendations.length > 0 && (
+          <div className="mt-20 space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
+             <div className="flex items-center gap-3">
+               <div className="p-2 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg">
+                 <Sparkles size={20} />
+               </div>
+               <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Lectures Recommandées</h3>
+             </div>
+
+             <div className="grid md:grid-cols-2 gap-4">
+               {recommendations.map((rec, idx) => (
+                 <div key={idx} className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg transition-all flex flex-col justify-between group">
+                    <div>
+                      <h4 className="font-bold text-slate-800 dark:text-slate-100 mb-2 line-clamp-2 group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
+                        {rec.title}
+                      </h4>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 mb-4 flex items-center gap-2">
+                        <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-xs font-bold">{rec.year}</span> 
+                        <span className="truncate max-w-[150px] italic">{rec.authors?.[0]?.name || "Auteur inconnu"}</span>
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2 mt-auto">
+                       {/* Bouton PDF */}
+                       {rec.openAccessPdf?.url ? (
+                         <a 
+                           href={rec.openAccessPdf.url} 
+                           target="_blank" 
+                           rel="noreferrer" 
+                           className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm font-bold hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+                         >
+                           <FileText size={16} /> PDF
+                         </a>
+                       ) : (
+                         <span className="flex-1 text-center py-2 text-xs text-gray-400 bg-gray-50 dark:bg-slate-700/50 rounded-lg cursor-not-allowed flex items-center justify-center gap-2">
+                           PDF non dispo
+                         </span>
+                       )}
+                       
+                       {/* Bouton Lien Externe */}
+                       <a 
+                         href={rec.url} 
+                         target="_blank" 
+                         rel="noreferrer" 
+                         className="px-3 py-2 rounded-lg bg-gray-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors"
+                         title="Voir sur Semantic Scholar"
+                       >
+                         <ExternalLink size={16} />
+                       </a>
+                    </div>
+                 </div>
+               ))}
+             </div>
+          </div>
+        )}
+
+        {/* --- VISUALISEUR PDF --- */}
+        <div className="mt-20 pt-10 border-t border-gray-100 dark:border-slate-800 transition-colors">
+          <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-xl mb-6">
+             <Eye className="text-gray-400" />
+             <h3>Document original (PDF)</h3>
+          </div>
+
+          {/* Logique : On affiche fileUrl (Supabase) OU pdfUrl (Arxiv/Web) */}
+          {article.fileUrl || article.pdfUrl ? (
+            <div className="bg-gray-800 rounded-3xl border border-gray-200 dark:border-slate-700 shadow-2xl overflow-hidden h-[850px]">
+               <iframe 
+                 src={article.fileUrl || article.pdfUrl} 
+                 className="w-full h-full" 
+                 title="Lecteur PDF"
+               />
+            </div>
+          ) : (
+            <div className="p-6 bg-gray-50 dark:bg-slate-800 rounded-xl text-gray-500 dark:text-slate-400 text-center">
+              Fichier PDF non disponible.
+            </div>
+          )}
+        </div>
+
+      </div>
+    </PageTransition>
+  );
+};
+
+export default ArticleDetail;
+--- FICHIER: src/Pages/Explorer.jsx ---
+
+import React, { useState } from 'react';
+import { Search, Loader2, Compass, Sparkles, BookOpen, ArrowRight, TrendingUp } from 'lucide-react';
+import { useNavigate } from 'react-router-dom'; // Import useNavigate
+import { searchResearchTimeline } from '../Services/openaiService';
+import Timeline from '../Components/Timeline';
+import PageTransition from '../Components/PageTransition';
+import { featuredArticles } from '../Data/featuredArticles'; // Import des données
+
+const Explorer = () => {
+  const [query, setQuery] = useState('');
+  const [timelineData, setTimelineData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  
+  const navigate = useNavigate(); // Hook pour naviguer
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+
+    setLoading(true);
+    setError(null);
+    setTimelineData([]);
+
+    try {
+      const data = await searchResearchTimeline(query);
+      setTimelineData(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --- NOUVEAU : Fonction pour ouvrir un article "découverte" ---
+  const openFeaturedArticle = (article) => {
+    // On navigue vers la page détail en passant l'objet article complet via le "state"
+    // Cela permet à ArticleDetail de l'afficher même s'il n'est pas dans Supabase
+    navigate(`/article/${article.id}`, { state: { article } });
+  };
+
+  return (
+    <PageTransition>
+      <div className="max-w-6xl mx-auto space-y-8 pt-4 pb-20">
+        
+        {/* EN-TÊTE FIXE */}
+        <div className="text-center space-y-4 mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-2xl mb-4 shadow-sm transition-colors">
+            <Compass size={32} />
+          </div>
+          <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white transition-colors">Découvertes Scientifiques</h1>
+          <p className="text-lg text-slate-500 dark:text-slate-400 max-w-2xl mx-auto transition-colors">
+            Explorez les articles majeurs qui ont façonné notre compréhension du monde.
+          </p>
+        </div>
+
+        {/* BARRE DE RECHERCHE (Pour ceux qui veulent quand même chercher) */}
+        <div className="max-w-2xl mx-auto mb-16 relative z-10">
+          <form onSubmit={handleSearch} className="relative group">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Ou recherchez une timeline (ex: Big Bang)..."
+              className="w-full px-6 py-4 pl-14 text-lg bg-white dark:bg-slate-800 dark:text-white border-2 border-gray-200 dark:border-slate-700 rounded-full focus:outline-none focus:border-purple-500 dark:focus:border-purple-500 focus:ring-4 focus:ring-purple-100 dark:focus:ring-purple-900/30 transition-all shadow-sm group-hover:shadow-lg"
+            />
+            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-500 group-focus-within:text-purple-500 transition-colors" size={24} />
+            
+            <button 
+              type="submit"
+              disabled={loading || !query}
+              className="absolute right-3 top-1/2 -translate-y-1/2 px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-full font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
+            >
+              {loading ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}
+              <span>Explorer</span>
+            </button>
+          </form>
+        </div>
+
+        {/* --- ZONE D'AFFICHAGE --- */}
+
+        {/* SI RECHERCHE EN COURS : TIMELINE */}
+        {(loading || timelineData.length > 0) && (
+          <div className="animate-in fade-in slide-in-from-bottom-10 duration-700">
+             {loading ? (
+                <div className="text-center py-20">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 dark:border-purple-400 mx-auto mb-4"></div>
+                  <p className="text-gray-500 dark:text-slate-400 animate-pulse">Génération de la timeline...</p>
+                </div>
+             ) : (
+                <Timeline events={timelineData} />
+             )}
+          </div>
+        )}
+
+        {/* SI PAS DE RECHERCHE : LE FEED SOCIAL D'ARTICLES */}
+        {!loading && timelineData.length === 0 && (
+          <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
+            
+            <div className="flex items-center gap-2 px-4 md:px-0 text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider text-xs">
+              <TrendingUp size={14} />
+              <span>Articles à la une</span>
+            </div>
+
+            {featuredArticles.map((topic, index) => (
+              <section key={index} className="space-y-6">
+                
+                {/* Titre de Catégorie */}
+                <div className="flex items-center gap-3 px-4 md:px-0 border-b border-gray-100 dark:border-slate-800 pb-2">
+                   <h2 className="text-xl font-bold text-slate-900 dark:text-white">{topic.category}</h2>
+                </div>
+
+                {/* Grille de Cards Articles */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 px-2 md:px-0">
+                  {topic.articles.map((article) => (
+                    <button
+                      key={article.id}
+                      onClick={() => openFeaturedArticle(article)}
+                      className="group text-left bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 hover:border-purple-300 dark:hover:border-purple-600 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col h-full overflow-hidden"
+                    >
+                      {/* Header Card */}
+                      <div className="p-6 pb-2">
+                        <div className="flex justify-between items-start mb-3">
+                           <span className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold">
+                             {article.year}
+                           </span>
+                           <BookOpen size={16} className="text-purple-400 group-hover:text-purple-600 transition-colors" />
+                        </div>
+                        <h3 className="font-bold text-lg text-slate-800 dark:text-white leading-tight mb-2 group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
+                          {article.title}
+                        </h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 italic mb-4">
+                          {article.authors[0]}
+                        </p>
+                      </div>
+
+                      {/* Résumé (Excerpt) */}
+                      <div className="px-6 pb-6 flex-1">
+                         <p className="text-sm text-slate-600 dark:text-slate-300 line-clamp-3">
+                           {article.summary}
+                         </p>
+                      </div>
+                      
+                      {/* Footer Card */}
+                      <div className="bg-gray-50 dark:bg-slate-800/50 px-6 py-3 border-t border-gray-100 dark:border-slate-700 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400">
+                        <span>Lire le cours complet</span>
+                        <ArrowRight size={14} className="transform group-hover:translate-x-1 transition-transform" />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+        
+      </div>
+    </PageTransition>
+  );
+};
+
+export default Explorer;
+--- FICHIER: src/Pages/Auth.jsx ---
+
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../Context/AuthContext';
+import { Mail, Lock, Loader2, LogIn, UserPlus } from 'lucide-react';
+import PageTransition from '../Components/PageTransition';
+
+const Auth = () => {
+  const [isLogin, setIsLogin] = useState(true); // Bascule entre Login et Inscription
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  
+  const { signIn, signUp } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      if (isLogin) {
+        const { error } = await signIn(email, password);
+        if (error) throw error;
+        navigate('/'); // Redirection vers l'accueil
+      } else {
+        const { error } = await signUp(email, password);
+        if (error) throw error;
+        alert("Compte créé ! Vérifiez vos emails ou connectez-vous.");
+        setIsLogin(true); // On bascule sur le login
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <PageTransition>
+      <div className="min-h-[80vh] flex items-center justify-center px-4">
+        <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl shadow-xl border border-gray-100 dark:border-slate-800 w-full max-w-md">
+          
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 bg-purple-600 rounded-2xl flex items-center justify-center text-white text-3xl font-bold mx-auto mb-4 shadow-lg shadow-purple-200 dark:shadow-none">
+              ε
+            </div>
+            <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white">
+              {isLogin ? "Bon retour parmi nous !" : "Rejoignez Épistémé"}
+            </h1>
+            <p className="text-slate-500 dark:text-slate-400 mt-2">
+              {isLogin ? "Connectez-vous pour accéder à votre bibliothèque." : "Créez un compte pour sauvegarder vos recherches."}
+            </p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+              <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 text-sm rounded-lg text-center">
+                {error}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">Email</label>
+              <div className="relative">
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                  type="email" 
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full pl-12 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all dark:text-white"
+                  placeholder="nom@exemple.com"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">Mot de passe</label>
+              <div className="relative">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                  type="password" 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-12 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all dark:text-white"
+                  placeholder="••••••••"
+                  required
+                />
+              </div>
+            </div>
+
+            <button 
+              type="submit" 
+              disabled={loading}
+              className="w-full py-4 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow-lg shadow-purple-200 dark:shadow-none transition-all flex items-center justify-center gap-2 mt-4"
+            >
+              {loading ? <Loader2 className="animate-spin" /> : (isLogin ? <LogIn size={20} /> : <UserPlus size={20} />)}
+              <span>{isLogin ? "Se connecter" : "Créer un compte"}</span>
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button 
+              onClick={() => setIsLogin(!isLogin)}
+              className="text-sm text-purple-600 dark:text-purple-400 font-bold hover:underline"
+            >
+              {isLogin ? "Pas encore de compte ? S'inscrire" : "Déjà un compte ? Se connecter"}
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </PageTransition>
+  );
+};
+
+export default Auth;
+--- FICHIER: src/Pages/Library.jsx ---
+
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Calendar, User, ArrowRight, BookOpen } from 'lucide-react';
+import { useApp } from '../Context/AppContext';
+import PageTransition from '../Components/PageTransition';
+
+const Library = () => {
+  const { articles, loadingInitial } = useApp();
+  const [selectedDomain, setSelectedDomain] = useState("Tout");
+
+  const domains = [
+    "Tout",
+    "Informatique", "Physique", "Chimie", "Biologie", 
+    "Médecine", "Mathématiques", "Sciences Sociales", 
+    "Économie", "Histoire", "Environnement", 
+    "Ingénierie", "Psychologie"
+  ];
+
+  const filteredArticles = selectedDomain === "Tout" 
+    ? articles 
+    : articles.filter(article => article.domain === selectedDomain);
+
+  if (loadingInitial) {
+    return (
+      <div className="flex items-center justify-center h-[50vh]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 dark:border-purple-400"></div>
+      </div>
+    );
+  }
+
+  return (
+    <PageTransition>
+      <div className="max-w-7xl mx-auto space-y-8 pt-4 pb-20">
+        
+        {/* EN-TÊTE & FILTRES */}
+        <header className="space-y-6 border-b border-gray-200 dark:border-slate-800 pb-6 transition-colors">
+          <div className="flex justify-between items-end">
+            <div>
+              <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white mb-2 transition-colors">Ma Bibliothèque</h1>
+              <p className="text-slate-500 dark:text-slate-400">Retrouvez tous vos articles analysés et triés par domaine.</p>
+            </div>
+            <div className="text-right hidden md:block">
+              <span className="text-3xl font-bold text-purple-600 dark:text-purple-400 transition-colors">{articles.length}</span>
+              <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Articles</p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pb-2">
+            {domains.map((domain) => (
+              <button
+                key={domain}
+                onClick={() => setSelectedDomain(domain)}
+                className={`
+                  px-4 py-2 rounded-full text-sm font-bold transition-all duration-200
+                  ${selectedDomain === domain 
+                    ? 'bg-purple-600 dark:bg-purple-500 text-white shadow-md scale-105' 
+                    : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-300 border border-gray-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 hover:border-purple-200 dark:hover:border-purple-500'}
+                `}
+              >
+                {domain}
+              </button>
+            ))}
+          </div>
+        </header>
+
+        {/* CONTENU */}
+        {filteredArticles.length === 0 ? (
+          <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-3xl border-2 border-dashed border-gray-200 dark:border-slate-700 transition-colors">
+            <BookOpen size={64} className="mx-auto text-gray-300 dark:text-slate-600 mb-4" />
+            <h3 className="text-xl font-bold text-slate-700 dark:text-slate-200">Aucun article dans cette rubrique</h3>
+            <p className="text-gray-500 dark:text-slate-400 mt-2 mb-6">Changez de filtre ou analysez un nouveau document.</p>
+            {selectedDomain !== "Tout" && (
+              <button 
+                onClick={() => setSelectedDomain("Tout")}
+                className="text-purple-600 dark:text-purple-400 font-bold hover:underline"
+              >
+                Tout afficher
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredArticles.map((article) => (
+              <Link 
+                to={`/article/${article.id}`} 
+                key={article.id}
+                className="group bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col overflow-hidden h-full"
+              >
+                <div className="p-6 pb-4 flex-1">
+                  <div className="flex justify-between items-start mb-4">
+                    <span className="px-3 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs font-bold rounded-lg uppercase tracking-wide border border-blue-100 dark:border-blue-800">
+                      {article.domain || 'Science'}
+                    </span>
+                    <span className="flex items-center gap-1 text-xs text-gray-400 dark:text-slate-500 font-medium">
+                      <Calendar size={12} /> {article.year || 'N/A'}
+                    </span>
+                  </div>
+                  
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-3 line-clamp-2 leading-tight group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
+                    {article.title}
+                  </h3>
+                  
+                  <p className="text-slate-500 dark:text-slate-400 text-sm line-clamp-3 leading-relaxed mb-4">
+                    {article.summary}
+                  </p>
+                </div>
+
+                <div className="px-6 py-4 bg-gray-50 dark:bg-slate-800/50 border-t border-gray-100 dark:border-slate-700 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400">
+                    <User size={14} />
+                    <span className="font-medium truncate max-w-[120px]">
+                      {Array.isArray(article.authors) ? article.authors[0] : article.authors}
+                    </span>
+                  </div>
+                  <div className="p-2 bg-white dark:bg-slate-700 rounded-full text-purple-600 dark:text-purple-400 shadow-sm group-hover:bg-purple-600 dark:group-hover:bg-purple-500 group-hover:text-white transition-colors">
+                    <ArrowRight size={16} />
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    </PageTransition>
+  );
+};
+
+export default Library;
+--- FICHIER: src/Pages/Home.jsx ---
+
+import React, { useCallback } from 'react';
+import { useDropzone } from 'react-dropzone';
+import { UploadCloud, Loader2, Sparkles } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useApp } from '../Context/AppContext';
+import PageTransition from '../Components/PageTransition';
+
+const Home = () => {
+  const { processNewArticle, isAnalyzing } = useApp();
+  const navigate = useNavigate();
+
+  const onDrop = useCallback(async (acceptedFiles) => {
+    const file = acceptedFiles[0];
+    if (file && file.type === 'application/pdf') {
+      const newArticle = await processNewArticle(file);
+      if (newArticle) {
+        navigate(`/article/${newArticle.id}`);
+      }
+    } else {
+      alert("Merci de déposer un fichier PDF uniquement.");
+    }
+  }, [processNewArticle, navigate]);
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
+    onDrop, 
+    accept: { 'application/pdf': ['.pdf'] },
+    multiple: false
+  });
+
+  return (
+    <PageTransition>
+      <div className="max-w-4xl mx-auto py-20 text-center space-y-12">
+        
+        {/* En-tête */}
+        <div className="space-y-4">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 rounded-full text-sm font-bold shadow-sm transition-colors">
+            <Sparkles size={16} />
+            <span>Nouvelle Version IA 2.0</span>
+          </div>
+          <h1 className="text-5xl md:text-6xl font-extrabold text-slate-900 dark:text-white tracking-tight transition-colors">
+            Comprenez la science <br />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-500">
+              en un clin d'œil.
+            </span>
+          </h1>
+          <p className="text-xl text-slate-500 dark:text-slate-400 max-w-2xl mx-auto transition-colors">
+            Déposez un article scientifique PDF. Notre IA le lit, l'analyse et vous l'explique comme un professeur.
+          </p>
+        </div>
+
+        {/* Zone de Drop */}
+        <div 
+          {...getRootProps()} 
+          className={`
+            relative group cursor-pointer transition-all duration-300 ease-out
+            border-3 border-dashed rounded-3xl p-16
+            flex flex-col items-center justify-center gap-6
+            ${isDragActive 
+              ? 'border-purple-500 bg-purple-50 dark:bg-slate-800 scale-[1.02]' 
+              : 'border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/50 hover:border-purple-400 dark:hover:border-purple-500 hover:bg-slate-50 dark:hover:bg-slate-800 hover:shadow-xl'}
+          `}
+        >
+          <input {...getInputProps()} />
+          
+          {isAnalyzing ? (
+            <div className="flex flex-col items-center animate-pulse">
+              <Loader2 size={64} className="text-purple-600 dark:text-purple-400 animate-spin mb-4" />
+              <h3 className="text-2xl font-bold text-slate-800 dark:text-white">Analyse en cours...</h3>
+              <p className="text-slate-500 dark:text-slate-400">Lecture du PDF, extraction des concepts et rédaction du cours...</p>
+            </div>
+          ) : (
+            <>
+              <div className="p-6 bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 rounded-full group-hover:scale-110 transition-transform duration-300">
+                <UploadCloud size={48} />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-2xl font-bold text-slate-800 dark:text-white transition-colors">
+                  {isDragActive ? "Lâchez le fichier ici !" : "Cliquez ou glissez un PDF ici"}
+                </h3>
+                <p className="text-slate-400 font-medium">Supporte les fichiers PDF jusqu'à 20MB</p>
+              </div>
+            </>
+          )}
+        </div>
+
+      </div>
+    </PageTransition>
+  );
+};
+
+export default Home;
+--- FICHIER: src/Services/openaiService.js ---
+
+import OpenAI from 'openai';
+
+const openai = new OpenAI({
+  apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+  dangerouslyAllowBrowser: true
+});
+
+// --- OUTILS INTERNES (Non exportés, utilisés par les autres fonctions) ---
+
+// 1. Traduction pour améliorer la recherche
+const translateQueryToEnglish = async (query) => {
+  try {
+    const completion = await openai.chat.completions.create({
+      messages: [{ role: "system", content: "Traducteur mots-clés ANGLAIS. Donne juste la traduction." }, { role: "user", content: `Traduis : "${query}"` }],
+      model: "gpt-3.5-turbo",
+    });
+    return completion.choices[0].message.content.trim().replace(/"/g, '');
+  } catch (e) { return query; }
+};
+
+// 2. Système de Proxy pour contourner les CORS
+const fetchWithFailover = async (targetUrl) => {
+  const strategies = [
+    {
+      name: "AllOrigins",
+      url: `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}&t=${Date.now()}`,
+      extract: async (res) => JSON.parse((await res.json()).contents)
+    },
+    {
+      name: "CorsProxy",
+      url: `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+      extract: async (res) => res.json()
+    },
+    {
+      name: "ThingProxy",
+      url: `https://thingproxy.freeboard.io/fetch/${targetUrl}`,
+      extract: async (res) => res.json()
+    }
+  ];
+
+  let lastError = null;
+  for (const strategy of strategies) {
+    try {
+      const response = await fetch(strategy.url);
+      if (!response.ok) throw new Error("Status " + response.status);
+      return await strategy.extract(response);
+    } catch (error) { lastError = error; }
+  }
+  throw lastError || new Error("Proxies failed");
+};
+
+// 3. Recherche réelle sur Semantic Scholar
+const searchRealScientificPapers = async (query) => {
+  try {
+    const fields = "title,authors,year,abstract,openAccessPdf,url,citationCount";
+    // On demande un peu plus d'articles pour pouvoir filtrer les mauvais
+    const data = await fetchWithFailover(`https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=10&fields=${fields}`);
+
+    if (!data.data || data.data.length === 0) return [];
+    
+    // Filtres qualité
+    let validPapers = data.data.filter(p => p.title && p.year).sort((a, b) => (b.citationCount || 0) - (a.citationCount || 0));
+    
+    return validPapers;
+  } catch (error) { 
+    console.error("Erreur Semantic Scholar:", error);
+    return []; 
+  }
+};
+
+// --- FONCTIONS EXPORTÉES (Celles utilisées par l'App) ---
+
+// A. ANALYSE DU PDF (Cours Magistral)
+export const analyzeArticleWithAI = async (text) => {
+  try {
+    const textToAnalyze = text.substring(0, 25000);
+    const allowedDomains = "Informatique, Physique, Chimie, Biologie, Médecine, Mathématiques, Sciences Sociales, Économie, Histoire, Environnement, Ingénierie, Psychologie";
+
+    const prompt = `
+      Tu es un Professeur d'Université Francophone Distingué.
+      TA MISSION : Rédiger un cours magistral complet en FRANÇAIS basé sur cet article.
+      
+      RÈGLES ABSOLUES :
+      1. LANGUE : TOUT en FRANÇAIS.
+      2. FORMAT : JSON strict.
+      3. DOMAINE : Choisis UNIQUEMENT parmi : [${allowedDomains}].
+      
+      Structure JSON attendue :
+      {
+        "title": "Titre traduit",
+        "authors": ["Auteur 1"],
+        "year": "2024",
+        "domain": "Domaine choisi",
+        "summary": "Introduction complète (5-6 phrases).",
+        "explanatory_sections": [
+          {"title": "1. Contexte", "content": "Détails..."},
+          {"title": "2. Méthode", "content": "Détails..."},
+          {"title": "3. Résultats", "content": "Détails..."},
+          {"title": "4. Conclusion", "content": "Détails..."}
+        ]
+      }
+
+      Article : "${textToAnalyze}"
+    `;
+
+    const completion = await openai.chat.completions.create({
+      messages: [
+        { role: "system", content: "Expert scientifique JSON Français." }, 
+        { role: "user", content: prompt }
+      ],
+      model: "gpt-3.5-turbo-16k",
+      temperature: 0.3,
+    });
+
+    const content = completion.choices[0].message.content;
+    const cleanJson = content.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (error) {
+    console.error("Erreur OpenAI (Analyse):", error);
+    throw error;
+  }
+};
+
+// B. TIMELINE (Explorateur)
+export const searchResearchTimeline = async (query) => {
+  try {
+    // 👇 ON CHANGE L'URL ICI 👇
+    // On appelle notre route locale "/api/scholar" définie dans vite.config.js
+    const response = await fetch(
+      `/api/scholar?query=${encodeURIComponent(query)}&limit=10&fields=title,abstract,year,authors,venue,url,openAccessPdf`
+    );
+    
+    // Le reste ne change pas
+    const data = await response.json();
+    
+    if (!data.data || data.data.length === 0) return [];
+
+    return data.data
+      .filter(paper => paper.title)
+      .map(paper => ({
+        title: paper.title,
+        year: paper.year || new Date().getFullYear(),
+        description: paper.abstract || "Résumé non disponible.",
+        authors: paper.authors ? paper.authors.map(a => a.name).join(', ') : "Auteurs inconnus",
+        pdfUrl: paper.openAccessPdf ? paper.openAccessPdf.url : paper.url,
+        id: paper.paperId
+      }))
+      .sort((a, b) => (b.year || 0) - (a.year || 0));
+  } catch (error) {
+    console.error("Erreur Recherche (Tunnel):", error);
+    return [];
+  }
+};
+
+// C. RECHERCHE D'ARTICLES SIMILAIRES (Pour l'upload)
+export const findSimilarArticles = async (frenchTitle) => {
+  try {
+    console.log(`🔎 Recherche articles similaires pour : ${frenchTitle}`);
+    
+    // 1. Traduction
+    const englishQuery = await translateQueryToEnglish(frenchTitle);
+    console.log(`🇬🇧 Traduction : ${englishQuery}`);
+    
+    // 2. Recherche Semantic Scholar
+    const papers = await searchRealScientificPapers(englishQuery);
+    console.log(`📄 Articles trouvés : ${papers.length}`);
+    
+    // 3. On retourne les 4 premiers
+    return papers.slice(0, 4);
+  } catch (error) {
+    console.error("❌ Erreur recherche similaire:", error);
+    return []; // Retourne tableau vide pour ne pas faire planter l'app
+  }
+};
+--- FICHIER: src/Services/fileService.js ---
+
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Configuration du worker (version .mjs corrigée)
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+export const extractTextFromPDF = async (file) => {
+  console.log("1. Début de la lecture du PDF...");
+  
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+    
+    let fullText = '';
+    const maxPages = Math.min(pdf.numPages, 10); // On lit un peu plus de pages (10 max)
+
+    for (let i = 1; i <= maxPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      
+      // ASTUCE ICI : On joint avec '\n' (saut de ligne) au lieu de ' ' (espace)
+      // Cela préserve mieux la structure des paragraphes et titres
+      const pageText = textContent.items.map((item) => item.str).join('\n');
+      
+      // On ajoute un marqueur visuel entre les pages
+      fullText += `\n\n--- Page ${i} ---\n\n${pageText}`;
+    }
+
+    return fullText;
+
+  } catch (error) {
+    console.error("ERREUR PDF:", error);
+    throw new Error("Impossible de lire le fichier PDF.");
+  }
+};
+--- FICHIER: src/Entities/ResearchQuery.js ---
+
+
+--- FICHIER: src/Entities/Article.js ---
+

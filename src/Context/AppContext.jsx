@@ -34,8 +34,8 @@ export const AppProvider = ({ children }) => {
   useEffect(() => {
     // On ne charge rien si pas d'utilisateur (évite les erreurs)
     if (!user) {
-        setLoadingInitial(false);
-        return;
+      setLoadingInitial(false);
+      return;
     }
 
     const fetchArticles = async () => {
@@ -51,14 +51,18 @@ export const AppProvider = ({ children }) => {
         // On formate les données
         const formattedData = data.map(article => ({
           ...article,
-          detailed_analysis: { explanatory_sections: article.explanatory_sections }, 
+          detailed_analysis: { explanatory_sections: article.explanatory_sections },
           // URL publique pour le PDF (si file_path existe)
           fileUrl: article.file_path ? supabase.storage.from('pdfs').getPublicUrl(article.file_path).data.publicUrl : null
         }));
 
         setArticles(formattedData);
       } catch (error) {
-        console.error('Erreur chargement Supabase:', error.message);
+        if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+          console.warn('Supabase fetch aborted in AppContext:', error);
+        } else {
+          console.error('Erreur chargement Supabase:', error.message);
+        }
       } finally {
         setLoadingInitial(false);
       }
@@ -70,8 +74,8 @@ export const AppProvider = ({ children }) => {
   // --- 2. PROCESSUS D'UPLOAD COMPLET ---
   const processNewArticle = async (file) => {
     if (!user) {
-        alert("Veuillez vous connecter pour analyser un article.");
-        return;
+      alert("Veuillez vous connecter pour analyser un article.");
+      return;
     }
 
     setIsAnalyzing(true);
@@ -79,7 +83,7 @@ export const AppProvider = ({ children }) => {
       // A. Lecture du fichier
       console.log("1. Lecture du PDF...");
       const text = await extractTextFromPDF(file);
-      
+
       // B. Analyse IA (Résumé + Cours)
       console.log("2. Analyse IA...");
       const metadata = await analyzeArticleWithAI(text);
@@ -87,12 +91,12 @@ export const AppProvider = ({ children }) => {
       // C. Recherche d'articles similaires
       console.log("2b. Recherche d'articles similaires...");
       const suggestions = await findSimilarArticles(metadata.title);
-      
+
       // D. Upload du PDF vers Supabase Storage
       console.log("3. Upload du fichier vers Supabase Storage...");
       const cleanName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
       const fileName = `${Date.now()}_${cleanName}`;
-      
+
       const { error: uploadError } = await supabase.storage
         .from('pdfs')
         .upload(fileName, file);
@@ -101,7 +105,7 @@ export const AppProvider = ({ children }) => {
 
       // E. Sauvegarde des métadonnées dans la Table Supabase
       console.log("4. Sauvegarde en Base de Données...");
-      
+
       const { data: insertedData, error: dbError } = await supabase
         .from('articles')
         .insert([
@@ -111,7 +115,7 @@ export const AppProvider = ({ children }) => {
             year: metadata.year,
             domain: metadata.domain,
             summary: metadata.summary,
-            full_text: text, 
+            full_text: text,
             explanatory_sections: metadata.explanatory_sections,
             file_path: fileName,
             recommendations: suggestions,
@@ -129,7 +133,7 @@ export const AppProvider = ({ children }) => {
         detailed_analysis: { explanatory_sections: newArticleFromDb.explanatory_sections },
         fileUrl: supabase.storage.from('pdfs').getPublicUrl(fileName).data.publicUrl
       };
-      
+
       setArticles(prev => [newArticleForState, ...prev]);
       return newArticleForState;
 

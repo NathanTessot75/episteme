@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { 
-  ArrowLeft, Calendar, User, Eye, BookOpen, ExternalLink, 
-  FileText, Sparkles, Heart, Layers, Plus, Check, X, Lightbulb, Info 
+import {
+  ArrowLeft, Calendar, User, Eye, BookOpen, ExternalLink,
+  FileText, Sparkles, Heart, Layers, Plus, Check, X, Lightbulb, Info
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { useApp } from '../Context/AppContext';
 import { useAuth } from '../Context/AuthContext';
 import { supabase } from '../supabaseClient';
@@ -76,11 +77,11 @@ const ArticleDetail = () => {
   // --- LE PARSEUR DE TEXTE MAGIQUE ---
   const renderRichText = (content) => {
     if (!content) return null;
-    
+
     // On divise le texte en cherchant nos balises [TYPE: Titre :: Contenu]
     // Regex explication : On capture (TYPE), (Titre), et (Contenu)
     const regex = /\[(DEFINITION|EXEMPLE):\s*(.*?)\s*::\s*(.*?)\]/g;
-    
+
     let parts = [];
     let lastIndex = 0;
     let match;
@@ -90,7 +91,7 @@ const ArticleDetail = () => {
       if (match.index > lastIndex) {
         parts.push({ type: 'text', content: content.substring(lastIndex, match.index) });
       }
-      
+
       // Ajouter la balise spéciale
       parts.push({
         type: match[1], // 'DEFINITION' ou 'EXEMPLE'
@@ -114,8 +115,8 @@ const ArticleDetail = () => {
             {part.content}
           </div>
         );
-      } 
-      
+      }
+
       if (part.type === 'DEFINITION') {
         return (
           <div key={idx} className="my-8 p-6 rounded-2xl bg-gradient-to-r from-purple-50 to-blue-50 dark:from-slate-800 dark:to-slate-900 border-l-4 border-purple-500 shadow-sm">
@@ -134,7 +135,7 @@ const ArticleDetail = () => {
         return (
           <div key={idx} className="my-8 p-6 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-purple-100 dark:border-slate-700 relative overflow-hidden group">
             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-               <Lightbulb size={64} className="text-purple-600"/>
+              <Lightbulb size={64} className="text-purple-600" />
             </div>
             <div className="relative z-10">
               <div className="flex items-center gap-3 mb-2 text-blue-600 dark:text-blue-400 font-bold uppercase tracking-wider text-xs">
@@ -162,7 +163,7 @@ const ArticleDetail = () => {
   return (
     <PageTransition>
       <div className="max-w-4xl mx-auto pb-20 pt-8 px-6 md:px-0 relative">
-        
+
         <Link to={featuredArticle ? "/explorer" : "/library"} className="inline-flex items-center gap-2 text-gray-400 hover:text-purple-600 transition-colors mb-8 font-medium">
           <ArrowLeft size={18} /> {featuredArticle ? "Retour" : "Bibliothèque"}
         </Link>
@@ -175,7 +176,13 @@ const ArticleDetail = () => {
             </span>
             {!featuredArticle && (
               <div className="flex gap-2">
-                <button onClick={toggleLike} className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all ${isLiked ? 'bg-red-50 border-red-200 text-red-500' : 'bg-white dark:bg-slate-800 border-gray-200 text-gray-500'}`}>
+                <button
+                  onClick={toggleLike}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all ${isLiked
+                    ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-500/40 text-red-500 dark:text-red-300'
+                    : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-500 dark:text-gray-300'
+                    }`}
+                >
                   <Heart size={20} fill={isLiked ? "currentColor" : "none"} /> <span className="font-bold text-sm">{likeCount}</span>
                 </button>
                 {user && (
@@ -188,45 +195,33 @@ const ArticleDetail = () => {
           </div>
           <h1 className="text-3xl md:text-5xl font-extrabold text-slate-900 dark:text-white leading-tight mb-6">{article.title}</h1>
           <div className="flex items-center gap-8 text-lg text-gray-500">
-             <div className="flex items-center gap-2"><User size={20} className="text-purple-500" /><p className="font-medium">{Array.isArray(article.authors) ? article.authors[0] : article.authors}</p></div>
-             <div className="flex items-center gap-2"><Calendar size={20} className="text-blue-500" /><p>{article.year}</p></div>
+            <div className="flex items-center gap-2"><User size={20} className="text-purple-500" /><p className="font-medium">{Array.isArray(article.authors) ? article.authors[0] : article.authors}</p></div>
+            <div className="flex items-center gap-2"><Calendar size={20} className="text-blue-500" /><p>{article.year}</p></div>
           </div>
         </header>
 
         {/* CONTENU */}
         <div className="animate-slide-up space-y-16">
-          <div className="text-xl leading-relaxed text-slate-700 dark:text-slate-300 font-medium p-8 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-gray-100 dark:border-slate-800">
-            {article.summary}
+          {/* VUE MODE EXPERT (MARKDOWN STREAM) */}
+          <div className="prose prose-lg max-w-none dark:prose-invert bg-white dark:bg-slate-900 p-8 rounded-2xl border border-gray-100 dark:border-slate-800 shadow-sm">
+            <ReactMarkdown>
+              {article.full_analysis || article.summary || "Analyse en cours..."}
+            </ReactMarkdown>
           </div>
-
-          {sections ? sections.map((section, index) => (
-            <section key={index} className="relative">
-              <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-8 flex items-center gap-4">
-                <span className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-blue-600 text-white text-lg shadow-lg shadow-purple-200 dark:shadow-none">
-                  {index + 1}
-                </span>
-                {section.title}
-              </h2>
-              {/* APPEL DU RENDU RICHE ICI */}
-              <div className="prose prose-lg max-w-none dark:prose-invert">
-                {renderRichText(section.content)}
-              </div>
-            </section>
-          )) : <p>Contenu non disponible.</p>}
         </div>
 
         {/* RECOMMANDATIONS */}
         {recommendations.length > 0 && (
           <div className="mt-24 pt-10 border-t border-gray-200 dark:border-slate-800">
-             <h3 className="text-2xl font-bold mb-8 flex items-center gap-2 dark:text-white"><Sparkles className="text-blue-500"/> Pour aller plus loin</h3>
-             <div className="grid md:grid-cols-2 gap-4">
-               {recommendations.map((rec, idx) => (
-                 <div key={idx} className="bg-slate-50 dark:bg-slate-800/50 p-5 rounded-xl border border-gray-200 dark:border-slate-700">
-                    <h4 className="font-bold text-slate-800 dark:text-slate-100 mb-2">{rec.title}</h4>
-                    <a href={rec.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline flex items-center gap-1 font-bold text-sm">Source <ExternalLink size={14}/></a>
-                 </div>
-               ))}
-             </div>
+            <h3 className="text-2xl font-bold mb-8 flex items-center gap-2 dark:text-white"><Sparkles className="text-blue-500" /> Pour aller plus loin</h3>
+            <div className="grid md:grid-cols-2 gap-4">
+              {recommendations.slice(0, 4).map((rec, idx) => (
+                <div key={idx} className="bg-slate-50 dark:bg-slate-800/50 p-5 rounded-xl border border-gray-200 dark:border-slate-700">
+                  <h4 className="font-bold text-slate-800 dark:text-slate-100 mb-2">{rec.title}</h4>
+                  <a href={rec.pdfUrl || rec.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline flex items-center gap-1 font-bold text-sm">Source <ExternalLink size={14} /></a>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -242,11 +237,11 @@ const ArticleDetail = () => {
         {showPlaylistModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setShowPlaylistModal(false)}>
             <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between mb-4"><h3 className="font-bold text-lg dark:text-white">Collections</h3><button onClick={() => setShowPlaylistModal(false)}><X/></button></div>
+              <div className="flex justify-between mb-4"><h3 className="font-bold text-lg dark:text-white">Collections</h3><button onClick={() => setShowPlaylistModal(false)}><X /></button></div>
               {feedbackMsg ? <div className="text-green-600 font-bold text-center py-4">{feedbackMsg}</div> : (
                 <div className="space-y-2">
                   {userPlaylists.map(list => <button key={list.id} onClick={() => addToPlaylist(list.id)} className="w-full text-left p-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 font-bold dark:text-white">{list.title}</button>)}
-                  <div className="flex gap-2 pt-4"><input value={newPlaylistTitle} onChange={e => setNewPlaylistTitle(e.target.value)} placeholder="Nouvelle..." className="flex-1 p-2 border rounded-lg dark:bg-slate-800 dark:text-white"/><button onClick={createPlaylistAndAdd} className="bg-purple-600 text-white p-2 rounded-lg"><Plus/></button></div>
+                  <div className="flex gap-2 pt-4"><input value={newPlaylistTitle} onChange={e => setNewPlaylistTitle(e.target.value)} placeholder="Nouvelle..." className="flex-1 p-2 border rounded-lg dark:bg-slate-800 dark:text-white" /><button onClick={createPlaylistAndAdd} className="bg-purple-600 text-white p-2 rounded-lg"><Plus /></button></div>
                 </div>
               )}
             </div>

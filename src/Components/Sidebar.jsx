@@ -16,7 +16,7 @@ const Sidebar = () => {
 
   return (
     <aside className="hidden md:flex w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 h-screen flex-col sticky top-0 left-0 z-50 transition-colors duration-300">
-      
+
       {/* DÉGRADÉ SVG */}
       <svg width="0" height="0" className="absolute block w-0 h-0 overflow-hidden">
         <defs>
@@ -46,19 +46,18 @@ const Sidebar = () => {
             key={item.to}
             to={item.to}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-200 group ${
-                isActive
-                  ? "bg-purple-50 shadow-sm ring-1 ring-purple-100 dark:bg-slate-800 dark:ring-slate-700"
-                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-900 font-medium dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              `flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-200 group ${isActive
+                ? "bg-purple-50 shadow-sm ring-1 ring-purple-100 dark:bg-slate-800 dark:ring-slate-700"
+                : "text-slate-500 hover:bg-slate-50 hover:text-slate-900 font-medium dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               }`
             }
           >
             {({ isActive }) => (
               <>
-                <item.icon 
-                  size={20} 
+                <item.icon
+                  size={20}
                   style={isActive ? { stroke: "url(#gradient-icon)" } : {}}
-                  className={isActive ? '' : 'text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300 transition-colors'} 
+                  className={isActive ? '' : 'text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300 transition-colors'}
                 />
                 <span className={isActive ? "font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600" : ""}>
                   {item.label}
@@ -92,7 +91,7 @@ const Sidebar = () => {
           </Link>
         )}
 
-        <button 
+        <button
           onClick={toggleTheme}
           className="w-full flex items-center justify-between px-4 py-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors"
         >
@@ -101,7 +100,7 @@ const Sidebar = () => {
             {darkMode ? "Mode Nuit" : "Mode Jour"}
           </span>
           <div className={`w-8 h-4 rounded-full relative transition-colors ${darkMode ? 'bg-gradient-to-r from-purple-600 to-blue-600' : 'bg-slate-300'}`}>
-            <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all duration-300 ${darkMode ? 'left-4.5' : 'left-0.5'}`}></div>
+            <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-all duration-300 ${darkMode ? 'translate-x-4' : ''}`}></div>
           </div>
         </button>
       </div>

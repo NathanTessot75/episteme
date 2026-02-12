@@ -1,7 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 
-// --- CONFIGURATION DES CLÉS API ---
+// --- CONFIGURATION ---
+// Par défaut, on passe par un proxy local (/api/openai) pour éviter CORS + ne pas exposer la clé côté navigateur.
+// Si vous voulez forcer l'appel direct, définissez VITE_OPENAI_BASE_URL="https://api.openai.com".
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
+const OPENAI_BASE_URL = import.meta.env.VITE_OPENAI_BASE_URL || '/api/openai';
 const SEMANTIC_API_KEY = import.meta.env.VITE_SEMANTIC_API_KEY;
 
 // --------------------------------------------------
@@ -22,7 +25,8 @@ const computeScientificScore = (citationCount, year) => {
 // --------------------------------------------------
 
 export const expandQueryWithAI = async (query) => {
-  if (!OPENAI_API_KEY) return [query];
+  // Si on appelle OpenAI directement, il faut une clé. Via proxy, pas besoin côté client.
+  if (OPENAI_BASE_URL.startsWith('http') && !OPENAI_API_KEY) return [query];
 
   const prompt = `
 Tu es un moteur de recherche scientifique.
@@ -38,12 +42,12 @@ Requête: "${query}"
 `;
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const headers = { "Content-Type": "application/json" };
+    if (OPENAI_BASE_URL.startsWith('http')) headers.Authorization = `Bearer ${OPENAI_API_KEY}`;
+
+    const response = await fetch(`${OPENAI_BASE_URL}/v1/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
+      headers,
       body: JSON.stringify({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
@@ -53,6 +57,7 @@ Requête: "${query}"
     });
 
     const data = await response.json();
+    if (!response.ok) throw new Error(data?.error?.message || `OpenAI error (status ${response.status})`);
     return JSON.parse(data.choices[0].message.content).queries || [query];
   } catch (err) {
     console.warn("Expansion IA échouée, fallback simple.");
@@ -77,7 +82,7 @@ export const searchResearchTimeline = async (query) => {
     for (const q of expandedQueries) {
       // A. Papiers fondateurs (impact)
       const classicRes = await fetch(
-        `/api/scholar?query=${encodeURIComponent(q)}&limit=10&sort=citationCount&fields=title,abstract,year,authors,url,openAccessPdf,citationCount,paperId`,
+        `/api/scholar?query=${encodeURIComponent(q)}&limit=10&sort=citationCount&fields=title,abstract,tldr,year,authors,url,openAccessPdf,citationCount,paperId`,
         { headers }
       );
 
@@ -85,7 +90,7 @@ export const searchResearchTimeline = async (query) => {
       const surveyRes = await fetch(
         `/api/scholar?query=${encodeURIComponent(
           q + " survey review"
-        )}&limit=5&sort=relevance&fields=title,abstract,year,authors,url,openAccessPdf,citationCount,paperId`,
+        )}&limit=5&sort=relevance&fields=title,abstract,tldr,year,authors,url,openAccessPdf,citationCount,paperId`,
         { headers }
       );
 
@@ -93,7 +98,7 @@ export const searchResearchTimeline = async (query) => {
       const recentRes = await fetch(
         `/api/scholar?query=${encodeURIComponent(
           q
-        )}&limit=10&sort=relevance&year=${CURRENT_YEAR - 3}-${CURRENT_YEAR}&fields=title,abstract,year,authors,url,openAccessPdf,citationCount,paperId`,
+        )}&limit=10&sort=relevance&year=${CURRENT_YEAR - 3}-${CURRENT_YEAR}&fields=title,abstract,tldr,year,authors,url,openAccessPdf,citationCount,paperId`,
         { headers }
       );
 
@@ -132,8 +137,8 @@ export const searchResearchTimeline = async (query) => {
           title: paper.title,
           year: paper.year,
           description:
-            paper.abstract ||
-            `Article scientifique cité ${paper.citationCount || 0} fois.`,
+            paper.tldr?.text ||
+            (paper.abstract ? paper.abstract.slice(0, 200) + "..." : "Résumé non disponible."),
           authors: paper.authors.map((a) => a.name).join(", "),
           pdfUrl: paper.openAccessPdf?.url || paper.url,
           citationCount: paper.citationCount || 0,
@@ -181,108 +186,93 @@ export const findSimilarArticles = async (title) => {
 // --------------------------------------------------
 
 export const analyzeArticleWithAI = async (text) => {
-  if (!OPENAI_API_KEY) throw new Error("Clé API OpenAI manquante.");
+  if (OPENAI_BASE_URL.startsWith('http') && !OPENAI_API_KEY) throw new Error("Clé API OpenAI manquante.");
 
-  const truncatedText = text.slice(0, 25000);
+  // On garde une grande partie du texte pour permettre un cours détaillé.
+  const truncatedText = text.slice(0, 20000);
 
   const prompt = `
-Tu es un Professeur d'Université extrêmement pédagogue.
-Ta mission n'est PAS de résumer, mais de TRANSFORMER cet article en un COURS MAGISTRAL COMPLET.
+Tu es un expert scientifique et pédagogue.
+Ton analyse doit être fournie au format JSON.
 
-OBJECTIF:
-Un étudiant qui n'a jamais vu ce sujet doit pouvoir le COMPRENDRE EN PROFONDEUR.
-
-STYLE:
-- Très didactique
-- Progression logique
-- Explications longues et détaillées
-- Aucune information implicite
-
-OBLIGATIONS PÉDAGOGIQUES:
-Pour chaque concept important:
-1. Définition formelle claire
-2. Reformulation intuitive
-3. Exemple concret
-4. Si mathématique: expliquer chaque symbole
-5. Si concept abstrait: analogie réelle
-
-FORMAT DE DÉFINITION:
-[DEFINITION: Terme :: Explication détaillée]
-
-FORMAT D'EXEMPLE:
-[EXEMPLE: Contexte :: Illustration concrète]
-
-LONGUEUR:
-- Le cours doit être LONG (minimum 1200 mots)
-- Chaque section doit faire au moins 2-3 paragraphes
-
-CATÉGORIE (choisir EXACTEMENT une):
-["Informatique","Physique","Biologie","Médecine","Mathématiques","Sciences Sociales","Économie","Histoire","Environnement","Ingénierie","Psychologie","Philosophie","Chimie"]
-
-STRUCTURE JSON STRICTE:
-{
-  "title": "Titre traduit en français",
-  "authors": "Auteurs",
-  "year": "Année",
-  "domain": "CATÉGORIE",
-  "summary": "Introduction pédagogique longue (contexte historique, enjeux, vocabulaire de base).",
-  "explanatory_sections": [
-    {
-      "title": "Fondements théoriques",
-      "content": "Cours détaillé avec définitions + exemples"
-    },
-    {
-      "title": "Concepts clés",
-      "content": "Décomposition concept par concept"
-    },
-    {
-      "title": "Méthodologie scientifique",
-      "content": "Explication des méthodes"
-    },
-    {
-      "title": "Résultats expliqués",
-      "content": "Interprétation pédagogique"
-    },
-    {
-      "title": "Discussion et limites",
-      "content": "Analyse critique"
-    },
-    {
-      "title": "Conclusion et perspectives",
-      "content": "Synthèse + ouverture"
-    }
-  ]
-}
-
-INTERDICTIONS:
-- Pas de résumé superficiel
-- Pas de phrases vagues
-- Pas de jargon non expliqué
+CONTENU DU JSON:
+1. "title": Le titre traduit en français.
+2. "authors": Les auteurs principaux (string).
+3. "year": L'année de publication (string ou number).
+4. "domain": Une catégorie parmi ["Informatique","Physique","Biologie","Médecine","Mathématiques","Sciences Sociales","Économie","Histoire","Environnement","Ingénierie","Psychologie","Philosophie","Chimie"].
+5. "summary_markdown": TRES IMPORTANT. Ce champ doit contenir TOUT ton résumé détaillé au format MARKDOWN standard.
+   - Ne répète PAS le titre de l'article en gras ou en titre.
+   - Utilise IMPÉRATIVEMENT des titres Markdowns (## pour les sections principales, ### pour les sous-sections).
+   - Tes paragraphes doivent être clairs et concis, pas de blocs de texte indigestes.
+   - Saute des lignes entre les paragraphes pour aérer le texte.
+   - Utilise SYSTÉMATIQUEMENT du **gras** pour les concepts clés, les mots importants et les noms propres. Cela doit "sauter aux yeux".
+   - Fais des listes à puces pour énumérer des points, mais n'en abuse pas.
+   - Ton but est que la lecture soit fluide, aérée et hiérarchisée, comme un article de blog technique de haute qualité.
 
 TEXTE DE BASE:
 ${truncatedText}
 `;
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const headers = { "Content-Type": "application/json" };
+    if (OPENAI_BASE_URL.startsWith('http')) headers.Authorization = `Bearer ${OPENAI_API_KEY}`;
+
+    const response = await fetch(`${OPENAI_BASE_URL}/v1/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
+      headers,
       body: JSON.stringify({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.25,
-        response_format: { type: "json_object" },
+        temperature: 0.3,
+        max_tokens: 3000,
+        response_format: { type: "json_object" }
       }),
     });
 
-    const data = await response.json();
-    return JSON.parse(data.choices[0].message.content);
+    const data = await response.json().catch(() => null);
 
-  } catch (error) {
-    console.error("Erreur OpenAI:", error);
-    throw new Error("Échec de l'analyse IA.");
+    if (!response.ok) {
+      console.error("Erreur OpenAI (HTTP):", response.status, data);
+      const message =
+        data?.error?.message ||
+        `Appel OpenAI échoué (statut ${response.status}). Vérifiez la clé API ou le modèle.`;
+      throw new Error(message);
+    }
+
+    if (!data?.choices?.[0]?.message?.content) {
+      console.error("Réponse OpenAI inattendue:", data);
+      throw new Error("Réponse OpenAI inattendue (aucun contenu retourné).");
+    }
+
+    const contentStr = data.choices[0].message.content;
+    let parsed;
+    try {
+      parsed = JSON.parse(contentStr);
+    } catch (e) {
+      console.error("Erreur JSON parse:", e);
+      // Fallback si le JSON est malformé mais contient du texte
+      parsed = {
+        title: "Analyse (Format brut)",
+        summary_markdown: contentStr,
+        authors: "IA",
+        year: new Date().getFullYear(),
+        domain: "Science"
+      };
+    }
+
+    return {
+      ...parsed,
+      // On mappe le champ markdown vers full_analysis pour le front
+      full_analysis: parsed.summary_markdown || parsed.summary || "",
+      // IMPORTANT: On peuple aussi 'summary' pour que ce soit sauvegardé en BDD via AppContext
+      summary: parsed.summary_markdown || parsed.summary || "",
+      explanatory_sections: [] // Toujours vide pour le mode Markdown stream
+    };
+
+  } catch (e) {
+    console.error("Erreur parsing/fetch IA:", e);
+    throw e;
   }
+
+
 };

@@ -7,15 +7,13 @@ import { AppProvider } from './Context/AppContext';
 import { AuthProvider } from './Context/AuthContext'; // <--- 1. IMPORT OBLIGATOIRE
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      {/* 👇 2. ON AJOUTE LE AUTH PROVIDER ICI 👇 */}
-      <AuthProvider>
-        <AppProvider> 
-          <App />
-        </AppProvider>
-      </AuthProvider>
-      {/* 👆 FIN DES PROVIDERS 👆 */}
-    </BrowserRouter>
-  </React.StrictMode>,
+  <BrowserRouter>
+    {/* 👇 2. ON AJOUTE LE AUTH PROVIDER ICI 👇 */}
+    <AuthProvider>
+      <AppProvider>
+        <App />
+      </AppProvider>
+    </AuthProvider>
+    {/* 👆 FIN DES PROVIDERS 👆 */}
+  </BrowserRouter>
 );

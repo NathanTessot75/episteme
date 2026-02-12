@@ -2,12 +2,26 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../Context/AuthContext';
 import { supabase } from '../supabaseClient';
-import { 
-  FileText, Trash2, Calendar, Upload, Heart, 
+import {
+  FileText, Trash2, Calendar, Upload, Heart,
   Layers, Plus, FolderOpen, ArrowRight, Loader2
 } from 'lucide-react';
 import PageTransition from '../Components/PageTransition';
 import { motion, AnimatePresence } from 'framer-motion';
+
+// --- UTILS ---
+const stripMarkdown = (text) => {
+  if (!text) return "";
+  return text
+    .replace(/#+\s/g, "")       // Titres
+    .replace(/\*\*/g, "")       // Gras
+    .replace(/\*/g, "")         // Italique / Puces
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // Liens
+    .replace(/`/g, "")          // Code
+    .replace(/>\s/g, "")        // Citations
+    .replace(/\n\s*\n/g, " ")   // Sauts de ligne multiples
+    .trim();
+};
 
 // --- COMPOSANT CARTE ---
 const LibraryCard = ({ article, isUpload, onDelete }) => (
@@ -18,8 +32,8 @@ const LibraryCard = ({ article, isUpload, onDelete }) => (
           <FileText size={24} />
         </div>
         {isUpload && (
-          <button 
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(article.id); }} 
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(article.id); }}
             className="text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded-full transition-all"
           >
             <Trash2 size={18} />
@@ -31,10 +45,12 @@ const LibraryCard = ({ article, isUpload, onDelete }) => (
           {article.title}
         </h3>
         <div className="flex flex-wrap gap-2 text-xs text-slate-500 dark:text-slate-400 mb-4">
-           <span className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-1 rounded-md font-bold">{article.domain || 'Général'}</span>
-           <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded-md"><Calendar size={12} /> {article.year || 'N/A'}</span>
+          <span className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-1 rounded-md font-bold">{article.domain || 'Général'}</span>
+          <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded-md"><Calendar size={12} /> {article.year || 'N/A'}</span>
         </div>
-        <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3">{article.summary || "Aucun résumé."}</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3">
+          {stripMarkdown(article.summary) || "Aucun résumé."}
+        </p>
       </Link>
     </div>
     <Link to={`/article/${article.id}`} className="mt-4 pt-4 border-t border-gray-50 dark:border-slate-700/50 flex items-center gap-2 text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-80">
@@ -46,16 +62,18 @@ const LibraryCard = ({ article, isUpload, onDelete }) => (
 const Library = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('uploads');
-  
+
   // --- NOUVEAU : GESTION DES CATÉGORIES ---
   const [selectedCategory, setSelectedCategory] = useState('Tout');
   const CATEGORIES = ["Tout", "Informatique", "Physique", "Biologie", "Médecine", "Mathématiques", "Sciences Sociales", "Économie", "Histoire", "Environnement", "Ingénierie", "Psychologie", "Philosophie"];
 
-  const [myArticles, setMyArticles] = useState([]); 
+  const [myArticles, setMyArticles] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [playlists, setPlaylists] = useState([]);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [loading, setLoading] = useState(true);
+
+  const [error, setError] = useState(null);
 
   // Reset la catégorie quand on change d'onglet principal
   useEffect(() => {
@@ -65,14 +83,34 @@ const Library = () => {
   const fetchAllData = async () => {
     if (!user) return;
     setLoading(true);
+    setError(null);
+    console.log("Fetching data for user:", user.id);
     try {
-      const { data: uploads } = await supabase.from('articles').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
+      const { data: uploads, error: uploadsError } = await supabase.from('articles').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
+      if (uploadsError) throw uploadsError;
+      console.log("Uploads loaded:", uploads?.length);
+
       if (uploads) setMyArticles(uploads);
-      const { data: favs } = await supabase.from('favorites').select('article_id, articles(*)').eq('user_id', user.id);
+
+      const { data: favs, error: favsError } = await supabase.from('favorites').select('article_id, articles(*)').eq('user_id', user.id).order('created_at', { ascending: false });
+      if (favsError) throw favsError;
+
       if (favs) setFavorites(favs.map(f => f.articles).filter(Boolean));
-      const { data: lists } = await supabase.from('playlists').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
+
+      const { data: lists, error: listsError } = await supabase.from('playlists').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
+      if (listsError) throw listsError;
+
       if (lists) setPlaylists(lists);
-    } catch (err) { console.error(err); } finally { setLoading(false); }
+    } catch (err) {
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+        console.warn("Fetch aborted in Library:", err);
+      } else {
+        console.error("Error fetching library data:", err);
+        setError(err.message);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { if (user) fetchAllData(); else setLoading(false); }, [user]);
@@ -107,7 +145,7 @@ const Library = () => {
   ];
 
   if (!user) return <div className="text-center py-20 dark:text-white">Connectez-vous.</div>;
-  if (loading) return <div className="flex justify-center h-[50vh] items-center"><Loader2 className="animate-spin text-purple-600" size={40}/></div>;
+  if (loading) return <div className="flex justify-center h-[50vh] items-center"><Loader2 className="animate-spin text-purple-600" size={40} /></div>;
 
   return (
     <PageTransition>
@@ -115,6 +153,21 @@ const Library = () => {
         <div className="mb-8">
           <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white mb-1">Ma Bibliothèque</h1>
           <p className="text-slate-500 dark:text-slate-400">Gérez vos contenus, favoris et dossiers.</p>
+
+
+
+          {error && (
+            <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl border border-red-200 dark:border-red-800">
+              <p className="font-bold">Erreur de chargement :</p>
+              <pre className="text-xs mt-1 whitespace-pre-wrap">{error}</pre>
+              <button
+                onClick={fetchAllData}
+                className="mt-2 text-xs bg-red-100 dark:bg-red-800/50 px-3 py-1 rounded-full hover:bg-red-200 transition-colors"
+              >
+                Réessayer
+              </button>
+            </div>
+          )}
         </div>
 
         {/* ONGLETS PRINCIPAUX */}
@@ -125,7 +178,7 @@ const Library = () => {
               <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`relative px-6 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${isActive ? 'bg-white dark:bg-slate-800 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
                 {isActive && <motion.div layoutId="activeTab" className="absolute inset-0 bg-white dark:bg-slate-700 rounded-xl shadow-sm z-0" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />}
                 <span className="relative z-10 flex items-center gap-2">
-                  <tab.icon size={16} style={isActive ? { stroke: "url(#gradient-icon)" } : {}} /> 
+                  <tab.icon size={16} style={isActive ? { stroke: "url(#gradient-icon)" } : {}} />
                   <span className={isActive ? "text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600" : ""}>{tab.label}</span>
                 </span>
               </button>
@@ -145,8 +198,8 @@ const Library = () => {
                   onClick={() => setSelectedCategory(cat)}
                   className={`
                     px-4 py-1.5 rounded-full text-xs font-bold transition-all border
-                    ${isSelected 
-                      ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white border-transparent shadow-md' 
+                    ${isSelected
+                      ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white border-transparent shadow-md'
                       : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-gray-200 dark:border-slate-700 hover:border-purple-300 dark:hover:border-purple-600'}
                   `}
                 >
@@ -159,19 +212,19 @@ const Library = () => {
 
         <div className="min-h-[400px]">
           <AnimatePresence mode="wait">
-            
+
             {/* UPLOADS */}
             {activeTab === 'uploads' && (
               <motion.div key="uploads" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 {filterList(myArticles).length === 0 ? (
-                   <div className="text-center py-20 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800">
-                     <p className="text-slate-500 mb-6">
-                       {selectedCategory === 'Tout' ? "Aucun article uploadé." : `Aucun article dans "${selectedCategory}".`}
-                     </p>
-                     <Link to="/" className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-xl font-bold hover:shadow-lg transition-all">
-                       <Plus size={18} /> Analyser un PDF
-                     </Link>
-                   </div>
+                  <div className="text-center py-20 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800">
+                    <p className="text-slate-500 mb-6">
+                      {selectedCategory === 'Tout' ? "Aucun article uploadé." : `Aucun article dans "${selectedCategory}".`}
+                    </p>
+                    <Link to="/" className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-xl font-bold hover:shadow-lg transition-all">
+                      <Plus size={18} /> Analyser un PDF
+                    </Link>
+                  </div>
                 ) : (
                   <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {filterList(myArticles).map(a => <LibraryCard key={a.id} article={a} isUpload={true} onDelete={handleDeleteArticle} />)}
@@ -206,7 +259,7 @@ const Library = () => {
                   <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {playlists.map(list => (
                       <div key={list.id} className="group relative bg-gradient-to-br from-white to-purple-50 dark:from-slate-800 dark:to-slate-900 p-6 rounded-2xl border border-purple-100 dark:border-slate-700 hover:shadow-xl hover:shadow-purple-100/50 dark:hover:shadow-none transition-all duration-300 hover:-translate-y-1">
-                        <button onClick={() => deletePlaylist(list.id)} className="absolute top-4 right-4 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all z-10"><Trash2 size={16}/></button>
+                        <button onClick={() => deletePlaylist(list.id)} className="absolute top-4 right-4 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all z-10"><Trash2 size={16} /></button>
                         <div className="w-14 h-14 bg-gradient-to-br from-purple-600 to-blue-600 rounded-2xl flex items-center justify-center text-white mb-4 shadow-lg shadow-purple-200 dark:shadow-none group-hover:scale-105 transition-transform duration-300"><FolderOpen size={26} /></div>
                         <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-1 group-hover:text-purple-600 transition-colors">{list.title}</h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 uppercase tracking-wide font-medium">Créée le {new Date(list.created_at).toLocaleDateString()}</p>

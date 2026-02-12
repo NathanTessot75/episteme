@@ -11,12 +11,24 @@ import Profile from './Pages/Profile';
 import PlaylistDetail from './Pages/PlaylistDetail'; // <--- 1. IMPORT
 import Sidebar from './Components/Sidebar';
 
+// --- SCROLL TO TOP ---
+const ScrollToTop = () => {
+  const { pathname } = useLocation();
+
+  React.useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+
+  return null;
+};
+
 function App() {
   const location = useLocation();
 
   return (
     <div className="flex bg-slate-50 min-h-screen dark:bg-slate-950 dark:text-slate-200 transition-colors duration-300">
-      
+
+      <ScrollToTop />
       <Sidebar />
 
       <div className="flex-1 p-8 overflow-hidden">
@@ -28,10 +40,10 @@ function App() {
             <Route path="/explorer" element={<Explorer />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/profile" element={<Profile />} />
-            
+
             {/* 👇 2. C'EST CETTE LIGNE QUI MANQUAIT 👇 */}
             <Route path="/playlist/:id" element={<PlaylistDetail />} />
-            
+
           </Routes>
         </AnimatePresence>
       </div>

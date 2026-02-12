@@ -10,9 +10,19 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     // 1. Vérifier la session actuelle au démarrage
     const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user ?? null);
-      setLoading(false);
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        setUser(session?.user ?? null);
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.warn('Supabase getSession aborted (likely cancelled request). Ignoring.');
+        } else {
+          console.error('Error checking session:', error);
+        }
+      } finally {
+        setLoading(false);
+      }
     };
 
     getSession();
@@ -29,7 +39,17 @@ export const AuthProvider = ({ children }) => {
   // Fonctions d'action
   const signUp = (email, password) => supabase.auth.signUp({ email, password });
   const signIn = (email, password) => supabase.auth.signInWithPassword({ email, password });
-  const signOut = () => supabase.auth.signOut();
+  const signOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.warn("Erreur lors de la déconnexion Supabase (ignorée):", error);
+    } finally {
+      // Dans tous les cas, on nettoie l'état local
+      setUser(null);
+      setLoading(false);
+    }
+  };
 
   return (
     <AuthContext.Provider value={{ user, signUp, signIn, signOut, loading }}>

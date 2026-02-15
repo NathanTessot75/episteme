@@ -197,7 +197,7 @@ Ton analyse doit être fournie au format JSON.
 
 CONTENU DU JSON:
 1. "title": Le titre traduit en français.
-2. "original_title": Le titre original dans la langue source (souvent anglais).
+2. "original_title": Le titre EXACT tel qu'il est écrit dans le papier original (anglais ou autre). NE LE TRADUIS PAS.
 3. "authors": Les auteurs principaux (string).
 3. "year": L'année de publication (string ou number).
 4. "domain": Une catégorie parmi ["Informatique", "Physique", "Biologie", "Médecine", "Mathématiques", "Sciences Sociales", "Économie", "Histoire", "Environnement", "Ingénierie", "Psychologie", "Philosophie"]. Si le domaine exact n'existe pas, choisis le plus proche (ex: Chimie -> Physique ou Biologie).

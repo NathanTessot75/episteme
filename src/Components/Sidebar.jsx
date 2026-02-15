@@ -3,16 +3,53 @@ import { NavLink, Link } from 'react-router-dom';
 import { Home, BookOpen, Compass, Moon, Sun, LogIn, MessageCircle } from 'lucide-react';
 import { useApp } from '../Context/AppContext';
 import { useAuth } from '../Context/AuthContext';
+import { supabase } from '../supabaseClient';
 
 const Sidebar = () => {
   const { toggleTheme, darkMode } = useApp();
   const { user } = useAuth();
 
+  const [unreadCount, setUnreadCount] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!user) return;
+
+    // 1. Fetch initial count
+    const fetchUnread = async () => {
+      const { count, error } = await supabase
+        .from('direct_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('receiver_id', user.id)
+        .eq('is_read', false);
+
+      if (!error) setUnreadCount(count || 0);
+    };
+
+    fetchUnread();
+
+    // 2. Subscribe to changes
+    const channel = supabase
+      .channel('sidebar_badges')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'direct_messages',
+        filter: `receiver_id=eq.${user.id}`,
+      }, () => {
+        fetchUnread(); // Re-fetch on any change aimed at us
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
   const navItems = [
     { to: "/", icon: Home, label: "Accueil" },
     { to: "/library", icon: BookOpen, label: "Bibliothèque" },
     { to: "/explorer", icon: Compass, label: "Explorer" },
-    { to: "/messages", icon: MessageCircle, label: "Messages" },
+    { to: "/messages", icon: MessageCircle, label: "Messages", badge: unreadCount },
   ];
 
   return (
@@ -63,7 +100,12 @@ const Sidebar = () => {
                 <span className={isActive ? "font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600" : ""}>
                   {item.label}
                 </span>
-                {isActive && (
+                {item.badge > 0 && (
+                  <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm animate-pulse">
+                    {item.badge}
+                  </span>
+                )}
+                {isActive && !item.badge && (
                   <div className="ml-auto w-1.5 h-1.5 rounded-full bg-gradient-to-r from-purple-600 to-blue-600"></div>
                 )}
               </>

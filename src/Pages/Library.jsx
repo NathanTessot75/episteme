@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../Context/AuthContext';
+import { useApp } from '../Context/AppContext'; // <--- IMPORT AJOUTÉ
 import { supabase } from '../supabaseClient';
 import {
   FileText, Trash2, Calendar, Upload, Heart,
@@ -61,6 +62,7 @@ const LibraryCard = ({ article, isUpload, onDelete }) => (
 
 const Library = () => {
   const { user } = useAuth();
+  const { articles, favorites, playlists, loadingInitial, setArticles, setPlaylists } = useApp(); // <--- UTILISATION DU CONTEXTE GLOBAL
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('uploads');
 
@@ -68,53 +70,14 @@ const Library = () => {
   const [selectedCategory, setSelectedCategory] = useState('Tout');
   const CATEGORIES = ["Tout", "Informatique", "Physique", "Biologie", "Médecine", "Mathématiques", "Sciences Sociales", "Économie", "Histoire", "Environnement", "Ingénierie", "Psychologie", "Philosophie"];
 
-  const [myArticles, setMyArticles] = useState([]);
-  const [favorites, setFavorites] = useState([]);
-  const [playlists, setPlaylists] = useState([]);
   const [newPlaylistName, setNewPlaylistName] = useState('');
-  const [loading, setLoading] = useState(true);
 
-  const [error, setError] = useState(null);
+  // Plus besoin de loading local ou error local, on utilise ceux du contexte ou on gère silencieusement (les erreurs sont loggées dans le contexte)
 
   // Reset la catégorie quand on change d'onglet principal
   useEffect(() => {
     setSelectedCategory('Tout');
   }, [activeTab]);
-
-  const fetchAllData = async () => {
-    if (!user) return;
-    setLoading(true);
-    setError(null);
-    console.log("Fetching data for user:", user.id);
-    try {
-      const { data: uploads, error: uploadsError } = await supabase.from('articles').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
-      if (uploadsError) throw uploadsError;
-      console.log("Uploads loaded:", uploads?.length);
-
-      if (uploads) setMyArticles(uploads);
-
-      const { data: favs, error: favsError } = await supabase.from('favorites').select('article_id, articles(*)').eq('user_id', user.id).order('created_at', { ascending: false });
-      if (favsError) throw favsError;
-
-      if (favs) setFavorites(favs.map(f => f.articles).filter(Boolean));
-
-      const { data: lists, error: listsError } = await supabase.from('playlists').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
-      if (listsError) throw listsError;
-
-      if (lists) setPlaylists(lists);
-    } catch (err) {
-      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
-        console.warn("Fetch aborted in Library:", err);
-      } else {
-        console.error("Error fetching library data:", err);
-        setError(err.message);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { if (user) fetchAllData(); else setLoading(false); }, [user]);
 
   // Fonction de filtrage
   const filterList = (list) => {
@@ -124,19 +87,26 @@ const Library = () => {
 
   const handleDeleteArticle = async (id) => {
     if (!confirm("Supprimer ?")) return;
-    setMyArticles(prev => prev.filter(a => a.id !== id));
+    // Mise à jour optimiste via le contexte
+    setArticles(prev => prev.filter(a => a.id !== id));
     await supabase.from('articles').delete().eq('id', id);
   };
+
   const createPlaylist = async (e) => {
     e.preventDefault();
     if (!newPlaylistName.trim()) return;
     const { data } = await supabase.from('playlists').insert([{ title: newPlaylistName, user_id: user.id }]).select().single();
-    if (data) { setPlaylists([data, ...playlists]); setNewPlaylistName(''); }
+    if (data) {
+      // Mise à jour du contexte global nécessaire si on veut que ça se reflète partout
+      setPlaylists(prev => [data, ...prev]);
+      setNewPlaylistName('');
+    }
   };
+
   const deletePlaylist = async (id) => {
     if (!confirm("Supprimer ?")) return;
     await supabase.from('playlists').delete().eq('id', id);
-    setPlaylists(playlists.filter(p => p.id !== id));
+    setPlaylists(prev => prev.filter(p => p.id !== id));
   };
 
   const TABS = [
@@ -146,7 +116,7 @@ const Library = () => {
   ];
 
   if (!user) return <div className="text-center py-20 dark:text-white">Connectez-vous.</div>;
-  if (loading) return <div className="flex justify-center h-[50vh] items-center"><Loader2 className="animate-spin text-purple-600" size={40} /></div>;
+  if (loadingInitial) return <div className="flex justify-center h-[50vh] items-center"><Loader2 className="animate-spin text-purple-600" size={40} /></div>;
 
   return (
     <PageTransition>
@@ -157,18 +127,7 @@ const Library = () => {
 
 
 
-          {error && (
-            <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl border border-red-200 dark:border-red-800">
-              <p className="font-bold">Erreur de chargement :</p>
-              <pre className="text-xs mt-1 whitespace-pre-wrap">{error}</pre>
-              <button
-                onClick={fetchAllData}
-                className="mt-2 text-xs bg-red-100 dark:bg-red-800/50 px-3 py-1 rounded-full hover:bg-red-200 transition-colors"
-              >
-                Réessayer
-              </button>
-            </div>
-          )}
+
         </div>
 
         {/* ONGLETS PRINCIPAUX */}
@@ -217,7 +176,7 @@ const Library = () => {
             {/* UPLOADS */}
             {activeTab === 'uploads' && (
               <motion.div key="uploads" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                {filterList(myArticles).length === 0 ? (
+                {filterList(articles).length === 0 ? (
                   <div className="text-center py-20 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800">
                     <p className="text-slate-500 mb-6">
                       {selectedCategory === 'Tout' ? "Aucun article uploadé." : `Aucun article dans "${selectedCategory}".`}
@@ -228,7 +187,7 @@ const Library = () => {
                   </div>
                 ) : (
                   <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {filterList(myArticles).map(a => <LibraryCard key={a.id} article={a} isUpload={true} onDelete={handleDeleteArticle} />)}
+                    {filterList(articles).map(a => <LibraryCard key={a.id} article={a} isUpload={true} onDelete={handleDeleteArticle} />)}
                   </div>
                 )}
               </motion.div>

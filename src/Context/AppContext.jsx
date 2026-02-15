@@ -9,6 +9,8 @@ const AppContext = createContext();
 export const AppProvider = ({ children }) => {
   const { user } = useAuth(); // <--- 2. ON RÉCUPÈRE L'UTILISATEUR
   const [articles, setArticles] = useState([]);
+  const [favorites, setFavorites] = useState([]); // <--- NOUVEAU
+  const [playlists, setPlaylists] = useState([]); // <--- NOUVEAU
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
 
@@ -38,37 +40,45 @@ export const AppProvider = ({ children }) => {
       return;
     }
 
-    const fetchArticles = async () => {
+    const fetchUserData = async () => {
       try {
-        const { data, error } = await supabase
-          .from('articles')
-          .select('*')
-          .eq('user_id', user.id) // <--- ON FILTRE PAR UTILISATEUR ICI AUSSI
-          .order('created_at', { ascending: false });
+        setLoadingInitial(true);
+        // On lance les 3 requêtes en parallèle pour la vitesse
+        const [articlesRes, favsRes, playlistsRes] = await Promise.all([
+          supabase.from('articles').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+          supabase.from('favorites').select('article_id, articles(*)').eq('user_id', user.id).order('created_at', { ascending: false }),
+          supabase.from('playlists').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
+        ]);
 
-        if (error) throw error;
+        if (articlesRes.error) throw articlesRes.error;
+        if (favsRes.error) throw favsRes.error;
+        if (playlistsRes.error) throw playlistsRes.error;
 
-        // On formate les données
-        const formattedData = data.map(article => ({
+        // On formate les articles
+        const formattedArticles = (articlesRes.data || []).map(article => ({
           ...article,
           detailed_analysis: { explanatory_sections: article.explanatory_sections },
-          // URL publique pour le PDF (si file_path existe)
           fileUrl: article.file_path ? supabase.storage.from('pdfs').getPublicUrl(article.file_path).data.publicUrl : null
         }));
 
-        setArticles(formattedData);
+        const formattedFavs = (favsRes.data || []).map(f => f.articles).filter(Boolean);
+
+        setArticles(formattedArticles);
+        setFavorites(formattedFavs);
+        setPlaylists(playlistsRes.data || []);
+
       } catch (error) {
         if (error.name === 'AbortError' || error.message?.includes('aborted')) {
           console.warn('Supabase fetch aborted in AppContext:', error);
         } else {
-          console.error('Erreur chargement Supabase:', error.message);
+          console.error('Erreur chargement données utilisateur:', error.message);
         }
       } finally {
         setLoadingInitial(false);
       }
     };
 
-    fetchArticles();
+    fetchUserData();
   }, [user]); // Rechargement si l'utilisateur change
 
   // --- 2. PROCESSUS D'UPLOAD COMPLET ---
@@ -111,6 +121,7 @@ export const AppProvider = ({ children }) => {
         .insert([
           {
             title: metadata.title,
+            original_title: metadata.original_title,
             authors: metadata.authors, // Assurez-vous que c'est une string ou array selon votre BDD
             year: metadata.year,
             domain: metadata.domain,
@@ -146,7 +157,13 @@ export const AppProvider = ({ children }) => {
   };
 
   return (
-    <AppContext.Provider value={{ articles, setArticles, processNewArticle, isAnalyzing, loadingInitial, darkMode, toggleTheme }}>
+    <AppContext.Provider value={{
+      articles, setArticles,
+      favorites, setFavorites, // <--- EXPORTÉ
+      playlists, setPlaylists, // <--- EXPORTÉ
+      processNewArticle, isAnalyzing, loadingInitial,
+      darkMode, toggleTheme
+    }}>
       {children}
     </AppContext.Provider>
   );

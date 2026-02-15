@@ -8,6 +8,8 @@ import ArticleDetail from './Pages/ArticleDetail';
 import Explorer from './Pages/Explorer';
 import Auth from './Pages/Auth';
 import Profile from './Pages/Profile';
+import UserProfile from './Pages/UserProfile';
+import Messages from './Pages/Messages';
 import PlaylistDetail from './Pages/PlaylistDetail'; // <--- 1. IMPORT
 import Sidebar from './Components/Sidebar';
 
@@ -40,6 +42,8 @@ function App() {
             <Route path="/explorer" element={<Explorer />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/user/:userId" element={<UserProfile />} />
+            <Route path="/messages" element={<Messages />} />
 
             {/* 👇 2. C'EST CETTE LIGNE QUI MANQUAIT 👇 */}
             <Route path="/playlist/:id" element={<PlaylistDetail />} />

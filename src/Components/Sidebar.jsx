@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, Link } from 'react-router-dom';
-import { Home, BookOpen, Compass, Moon, Sun, LogIn } from 'lucide-react';
+import { Home, BookOpen, Compass, Moon, Sun, LogIn, MessageCircle } from 'lucide-react';
 import { useApp } from '../Context/AppContext';
 import { useAuth } from '../Context/AuthContext';
 
@@ -12,6 +12,7 @@ const Sidebar = () => {
     { to: "/", icon: Home, label: "Accueil" },
     { to: "/library", icon: BookOpen, label: "Bibliothèque" },
     { to: "/explorer", icon: Compass, label: "Explorer" },
+    { to: "/messages", icon: MessageCircle, label: "Messages" },
   ];
 
   return (

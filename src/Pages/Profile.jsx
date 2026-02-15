@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import PageTransition from '../Components/PageTransition';
 import { motion, AnimatePresence } from 'framer-motion';
+import UserSearch from '../Components/UserSearch';
 
 const ArticleCard = ({ article }) => (
   <div className="group bg-white dark:bg-slate-800 rounded-xl p-5 border border-gray-100 dark:border-slate-700 hover:shadow-xl transition-all flex flex-col justify-between h-full">
@@ -101,6 +102,9 @@ const Profile = () => {
           </div>
           <button onClick={handleLogout} className="px-6 py-3 rounded-xl border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400 font-bold hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2"><LogOut size={18} /> Déconnexion</button>
         </div>
+
+        {/* RECHERCHE UTILISATEUR */}
+        <UserSearch />
 
         <div className="flex justify-center mb-8">
           <div className="bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl inline-flex relative">

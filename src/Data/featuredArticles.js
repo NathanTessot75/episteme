@@ -7,6 +7,7 @@ export const featuredArticles = [
       {
         id: "feat-ai-1",
         title: "Attention Is All You Need",
+        original_title: "Attention Is All You Need",
         authors: ["Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "et al."],
         year: "2017",
         domain: "Informatique",
@@ -35,6 +36,7 @@ Le modèle est composé d'**encodeurs** (qui lisent) et de **décodeurs** (qui g
       {
         id: "feat-bio-1",
         title: "A Programmable Dual-RNA-Guided DNA Endonuclease in Adaptive Bacterial Immunity",
+        original_title: "A Programmable Dual-RNA-Guided DNA Endonuclease in Adaptive Bacterial Immunity",
         authors: ["M. Jinek", "E. Charpentier", "J. Doudna", "et al."],
         year: "2012",
         domain: "Biologie",
@@ -63,6 +65,7 @@ La percée majeure de cet article est de montrer qu'on peut fabriquer artificiel
       {
         id: "feat-space-1",
         title: "First M87 Event Horizon Telescope Results. I. The Shadow of the Supermassive Black Hole",
+        original_title: "First M87 Event Horizon Telescope Results. I. The Shadow of the Supermassive Black Hole",
         authors: ["The EHT Collaboration"],
         year: "2019",
         domain: "Physique",

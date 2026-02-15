@@ -197,7 +197,8 @@ Ton analyse doit être fournie au format JSON.
 
 CONTENU DU JSON:
 1. "title": Le titre traduit en français.
-2. "authors": Les auteurs principaux (string).
+2. "original_title": Le titre original dans la langue source (souvent anglais).
+3. "authors": Les auteurs principaux (string).
 3. "year": L'année de publication (string ou number).
 4. "domain": Une catégorie parmi ["Informatique", "Physique", "Biologie", "Médecine", "Mathématiques", "Sciences Sociales", "Économie", "Histoire", "Environnement", "Ingénierie", "Psychologie", "Philosophie"]. Si le domaine exact n'existe pas, choisis le plus proche (ex: Chimie -> Physique ou Biologie).
 5. "summary_markdown": TRES IMPORTANT. Ce champ doit contenir TOUT ton résumé détaillé au format MARKDOWN standard.
@@ -274,5 +275,56 @@ ${truncatedText}
     throw e;
   }
 
+};
 
+// --------------------------------------------------
+// 5. CHAT AVEC L'ARTICLE (NOUVEAU)
+// --------------------------------------------------
+
+export const chatWithArticleAI = async (question, context, history = []) => {
+  // On construit l'historique pour l'IA
+  const messages = [
+    {
+      role: "system",
+      content: `Tu es un assistant de recherche intelligent. L'utilisateur te pose des questions sur un article scientifique spécifique.
+      
+      CONTEXTE DE L'ARTICLE :
+      Titre : ${context.title}
+      Auteurs : ${context.authors}
+      Année : ${context.year}
+      Résumé/Extrait : ${context.summary || context.full_text?.slice(0, 5000)}... (tronqué si trop long)
+
+      Consignes :
+      1. Réponds UNIQUEMENT en te basant sur le contexte fourni. Si la réponse n'est pas dans le texte, dis-le clairement.
+      2. Sois concis, précis et pédagogique.
+      3. Cite des passages si pertinent.
+      4. Si la question est hors sujet (ex: "Quelle est la capitale de la France ?"), rappelle gentiment que tu es là pour discuter de l'article.`
+    },
+    ...history.map(msg => ({ role: msg.role === 'user' ? 'user' : 'assistant', content: msg.content })),
+    { role: "user", content: question }
+  ];
+
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (OPENAI_BASE_URL.startsWith('http') && OPENAI_API_KEY) headers.Authorization = `Bearer ${OPENAI_API_KEY}`;
+
+    const response = await fetch(`${OPENAI_BASE_URL}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "gpt-4o-mini", // ou gpt-3.5-turbo si 4o non dispo
+        messages,
+        temperature: 0.5,
+        max_tokens: 500
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error?.message || "Erreur Chat IA");
+
+    return data?.choices?.[0]?.message?.content || "Erreur de réponse.";
+  } catch (error) {
+    console.error("Erreur Chat:", error);
+    throw error;
+  }
 };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../Context/AuthContext';
 import { supabase } from '../supabaseClient';
 import {
@@ -61,6 +61,7 @@ const LibraryCard = ({ article, isUpload, onDelete }) => (
 
 const Library = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('uploads');
 
   // --- NOUVEAU : GESTION DES CATÉGORIES ---
@@ -258,12 +259,23 @@ const Library = () => {
                 {playlists.length === 0 ? <div className="text-center py-20 text-slate-400">Créez des collections.</div> : (
                   <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {playlists.map(list => (
-                      <div key={list.id} className="group relative bg-gradient-to-br from-white to-purple-50 dark:from-slate-800 dark:to-slate-900 p-6 rounded-2xl border border-purple-100 dark:border-slate-700 hover:shadow-xl hover:shadow-purple-100/50 dark:hover:shadow-none transition-all duration-300 hover:-translate-y-1">
-                        <button onClick={() => deletePlaylist(list.id)} className="absolute top-4 right-4 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all z-10"><Trash2 size={16} /></button>
+                      <div
+                        key={list.id}
+                        onClick={() => navigate(`/playlist/${list.id}`)}
+                        className="group relative bg-gradient-to-br from-white to-purple-50 dark:from-slate-800 dark:to-slate-900 p-6 rounded-2xl border border-purple-100 dark:border-slate-700 hover:shadow-xl hover:shadow-purple-100/50 dark:hover:shadow-none transition-all duration-300 hover:-translate-y-1 cursor-pointer"
+                      >
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deletePlaylist(list.id); }}
+                          className="absolute top-4 right-4 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all z-10"
+                        >
+                          <Trash2 size={16} />
+                        </button>
                         <div className="w-14 h-14 bg-gradient-to-br from-purple-600 to-blue-600 rounded-2xl flex items-center justify-center text-white mb-4 shadow-lg shadow-purple-200 dark:shadow-none group-hover:scale-105 transition-transform duration-300"><FolderOpen size={26} /></div>
                         <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-1 group-hover:text-purple-600 transition-colors">{list.title}</h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 uppercase tracking-wide font-medium">Créée le {new Date(list.created_at).toLocaleDateString()}</p>
-                        <Link to={`/playlist/${list.id}`} className="inline-flex items-center gap-2 text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-80 transition-all">Ouvrir le dossier <ArrowRight size={14} className="text-purple-600 dark:text-blue-400" /></Link>
+                        <div className="inline-flex items-center gap-2 text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-80 transition-all">
+                          Ouvrir la collection <ArrowRight size={14} className="text-purple-600 dark:text-blue-400" />
+                        </div>
                       </div>
                     ))}
                   </div>

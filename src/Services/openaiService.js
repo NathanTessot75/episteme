@@ -199,7 +199,7 @@ CONTENU DU JSON:
 1. "title": Le titre traduit en français.
 2. "authors": Les auteurs principaux (string).
 3. "year": L'année de publication (string ou number).
-4. "domain": Une catégorie parmi ["Informatique","Physique","Biologie","Médecine","Mathématiques","Sciences Sociales","Économie","Histoire","Environnement","Ingénierie","Psychologie","Philosophie","Chimie"].
+4. "domain": Une catégorie parmi ["Informatique", "Physique", "Biologie", "Médecine", "Mathématiques", "Sciences Sociales", "Économie", "Histoire", "Environnement", "Ingénierie", "Psychologie", "Philosophie"]. Si le domaine exact n'existe pas, choisis le plus proche (ex: Chimie -> Physique ou Biologie).
 5. "summary_markdown": TRES IMPORTANT. Ce champ doit contenir TOUT ton résumé détaillé au format MARKDOWN standard.
    - Ne répète PAS le titre de l'article en gras ou en titre.
    - Utilise IMPÉRATIVEMENT des titres Markdowns (## pour les sections principales, ### pour les sous-sections).

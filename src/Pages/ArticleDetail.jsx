@@ -32,17 +32,45 @@ const ArticleDetail = () => {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
 
-  const article = featuredArticle || articles.find(a => a.id.toString() === id);
+  const [fetchedArticle, setFetchedArticle] = useState(null);
+  const [loadingArticle, setLoadingArticle] = useState(false);
+
+  // Priority: 1. Navigation State -> 2. Context (My Library) -> 3. Fetched Individually
+  const article = featuredArticle || articles.find(a => a.id.toString() === id) || fetchedArticle;
+
+  // Helper to identify static/demo articles vs real DB articles
+  const isStaticFeatured = article?.id?.toString().startsWith('feat-');
 
   useEffect(() => {
-    if (article && !featuredArticle) {
-      fetchLikeData();
-      if (user) {
-        fetchPlaylists();
-        fetchChatHistory();
+    // If we have the article from state or context, do the side-effects
+    // If we have the article from state or context, do the side-effects
+    if (article) {
+      if (!isStaticFeatured) { // Only fetch user-specific data if it's a real DB article
+        fetchLikeData();
+        if (user) {
+          fetchPlaylists();
+          fetchChatHistory();
+        }
       }
+    } else {
+      // If we DON'T have the article, fetch it!
+      const fetchArticleById = async () => {
+        setLoadingArticle(true);
+        const { data, error } = await supabase.from('articles').select('*').eq('id', id).single();
+        if (data) {
+          // Add fileUrl if needed
+          const withUrl = {
+            ...data,
+            fileUrl: data.file_path ? supabase.storage.from('pdfs').getPublicUrl(data.file_path).data.publicUrl : null
+          };
+          setFetchedArticle(withUrl);
+        }
+        setLoadingArticle(false);
+      };
+
+      fetchArticleById();
     }
-  }, [user, article, id]);
+  }, [user, id, featuredArticle, articles]); // Added dependencies to re-run if needed
 
   const fetchLikeData = async () => {
     try {
@@ -73,7 +101,7 @@ const ArticleDetail = () => {
 
   const toggleLike = async () => {
     if (!user) return alert("Connectez-vous pour liker !");
-    if (featuredArticle) return alert("Article non sauvegardé.");
+    if (isStaticFeatured) return alert("Article de démonstration (lecture seule).");
     if (isLiked) {
       const { error } = await supabase.from('favorites').delete().eq('article_id', article.id).eq('user_id', user.id);
       if (!error) { setIsLiked(false); setLikeCount(prev => Math.max(0, prev - 1)); }
@@ -95,7 +123,7 @@ const ArticleDetail = () => {
   };
 
   const addToPlaylist = async (playlistId) => {
-    if (featuredArticle) return alert("Analysez cet article d'abord.");
+    if (isStaticFeatured) return alert("Article de démonstration (lecture seule).");
     const { error } = await supabase.from('playlist_items').insert([{ playlist_id: playlistId, article_id: article.id }]);
     if (error) setFeedbackMsg(error.code === '23505' ? "Déjà dans cette collection !" : "Erreur ajout.");
     else { setFeedbackMsg("Ajouté avec succès !"); setTimeout(() => { setShowPlaylistModal(false); setFeedbackMsg(""); }, 1000); }
@@ -164,7 +192,7 @@ const ArticleDetail = () => {
     setChatLoading(true);
 
     // Save user message
-    if (user && !featuredArticle) {
+    if (user && !isStaticFeatured) {
       supabase.from('article_chats').insert([{
         user_id: user.id,
         article_id: article.id,
@@ -189,7 +217,7 @@ const ArticleDetail = () => {
       setChatMessages(prev => [...prev, aiMsg]);
 
       // Save AI response
-      if (user && !featuredArticle) {
+      if (user && !isStaticFeatured) {
         supabase.from('article_chats').insert([{
           user_id: user.id,
           article_id: article.id,
@@ -295,8 +323,8 @@ const ArticleDetail = () => {
     <PageTransition>
       <div className="max-w-4xl mx-auto pb-20 pt-8 px-6 md:px-0 relative">
 
-        <Link to={featuredArticle ? "/explorer" : "/library"} className="inline-flex items-center gap-2 text-gray-400 hover:text-purple-600 transition-colors mb-8 font-medium">
-          <ArrowLeft size={18} /> {featuredArticle ? "Retour" : "Bibliothèque"}
+        <Link to={isStaticFeatured ? "/explorer" : "/library"} className="inline-flex items-center gap-2 text-gray-400 hover:text-purple-600 transition-colors mb-8 font-medium">
+          <ArrowLeft size={18} /> {isStaticFeatured ? "Retour" : "Bibliothèque"}
         </Link>
 
         {/* HEADER */}
@@ -305,7 +333,7 @@ const ArticleDetail = () => {
             <span className="px-3 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full text-sm font-bold tracking-wide">
               {article.domain || "Science"}
             </span>
-            {!featuredArticle && (
+            {!isStaticFeatured && (
               <div className="flex gap-2">
                 <button
                   onClick={toggleLike}

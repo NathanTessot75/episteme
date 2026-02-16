@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../Context/AuthContext';
-import { User, Send, MessageSquare } from 'lucide-react';
+import { User, Send, MessageCircle } from 'lucide-react';
 import PageTransition from '../Components/PageTransition';
 
 const Messages = () => {
@@ -192,7 +192,7 @@ const Messages = () => {
                     {!selectedFriend ? (
                         <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 text-center animate-in fade-in duration-700">
                             <div className="w-24 h-24 bg-gradient-to-br from-purple-100 to-blue-50 dark:from-slate-800 dark:to-slate-900 rounded-full flex items-center justify-center mb-6 shadow-inner">
-                                <MessageSquare size={40} className="text-purple-300" />
+                                <MessageCircle size={40} className="text-purple-300" />
                             </div>
                             <h3 className="text-xl font-bold text-slate-700 dark:text-slate-200 mb-2">Vos messages</h3>
                             <p>Sélectionnez une connexion à gauche pour démarrer la discussion.</p>
@@ -218,7 +218,7 @@ const Messages = () => {
                             </div>
 
                             {/* MESSAGES LIST */}
-                            <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-50/50 via-transparent to-transparent dark:from-purple-900/10" ref={scrollRef}>
+                            <div className="flex-1 overflow-y-auto p-6 space-y-2 custom-scrollbar bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-50/50 via-transparent to-transparent dark:from-purple-900/10" ref={scrollRef}>
                                 {messages.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-4">
                                         <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center">

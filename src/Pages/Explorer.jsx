@@ -5,6 +5,7 @@ import { searchResearchTimeline } from '../Services/openaiService';
 import Timeline from '../Components/Timeline';
 import PageTransition from '../Components/PageTransition';
 import { supabase } from '../supabaseClient';
+import { useAuth } from '../Context/AuthContext';
 
 // --- UTILS ---
 const stripMarkdown = (text) => {
@@ -29,16 +30,24 @@ const Explorer = () => {
   const [error, setError] = useState(null);
 
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   // 1. Charger le feed social au montage
   useEffect(() => {
     const fetchFeed = async () => {
       try {
-        const { data, error } = await supabase
+        let queryBuilder = supabase
           .from('articles')
           .select('*')
           .order('created_at', { ascending: false })
           .limit(20);
+
+        // Si connecté, on NE montre PAS ses propres articles
+        if (user) {
+          queryBuilder = queryBuilder.neq('user_id', user.id);
+        }
+
+        const { data, error } = await queryBuilder;
 
         if (error) throw error;
         setFeedArticles(data || []);
@@ -75,7 +84,7 @@ const Explorer = () => {
   };
 
   const openArticle = (article) => {
-    navigate(`/article/${article.id}`);
+    navigate(`/article/${article.id}`, { state: { article } });
   };
 
   return (

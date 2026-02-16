@@ -72,7 +72,7 @@ const Sidebar = () => {
             <span className="font-sans font-bold text-3xl pb-1 leading-none">ε</span>
           </div>
           <span className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            Épistémé
+            Épistémè
           </span>
         </div>
       </div>

@@ -11,6 +11,7 @@ const Messages = () => {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState("");
     const [loadingFriends, setLoadingFriends] = useState(true);
+    const [loadingMessages, setLoadingMessages] = useState(false);
     const scrollRef = useRef(null);
 
     useEffect(() => {
@@ -19,6 +20,7 @@ const Messages = () => {
 
     useEffect(() => {
         if (selectedFriend) {
+            setLoadingMessages(true);
             fetchMessages(selectedFriend.id);
             markMessagesAsRead(selectedFriend.id); // <--- Mark as read immediately
 
@@ -99,6 +101,7 @@ const Messages = () => {
             .order('created_at', { ascending: true });
 
         if (data) setMessages(data);
+        setLoadingMessages(false);
     };
 
     const sendMessage = async (e) => {
@@ -219,7 +222,11 @@ const Messages = () => {
 
                             {/* MESSAGES LIST */}
                             <div className="flex-1 overflow-y-auto p-6 space-y-2 custom-scrollbar bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-50/50 via-transparent to-transparent dark:from-purple-900/10" ref={scrollRef}>
-                                {messages.length === 0 ? (
+                                {loadingMessages ? (
+                                    <div className="flex justify-center items-center h-full">
+                                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+                                    </div>
+                                ) : messages.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-4">
                                         <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center">
                                             <span className="text-2xl">👋</span>

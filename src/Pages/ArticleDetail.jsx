@@ -392,7 +392,7 @@ const ArticleDetail = () => {
           <div className="flex items-center gap-2 font-bold text-xl mb-6 dark:text-white"><Eye className="text-gray-400" /><h3>Document original</h3></div>
           {article.fileUrl || article.pdfUrl ? (
             <div className="bg-gray-800 rounded-xl overflow-hidden h-[800px]"><iframe src={article.fileUrl || article.pdfUrl} className="w-full h-full" title="PDF" /></div>
-          ) : <div className="p-6 bg-gray-50 text-center rounded-xl">Non disponible.</div>}
+          ) : <div className="p-6 bg-gray-50 dark:bg-slate-800 text-center rounded-xl dark:text-slate-400">Non disponible.</div>}
         </div>
 
         {/* MODAL */}

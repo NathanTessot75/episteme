@@ -8,20 +8,26 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let mounted = true;
+
     // 1. Vérifier la session actuelle au démarrage
     const getSession = async () => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
+        if (!mounted) return;
+
         if (error) throw error;
         setUser(session?.user ?? null);
       } catch (error) {
+        if (!mounted) return;
+
         if (error.name === 'AbortError') {
-          console.warn('Supabase getSession aborted (likely cancelled request). Ignoring.');
+          // Silent
         } else {
           console.error('Error checking session:', error);
         }
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
@@ -29,11 +35,16 @@ export const AuthProvider = ({ children }) => {
 
     // 2. Écouter les changements (Connexion, Déconnexion)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
+      if (mounted) {
+        setUser(session?.user ?? null);
+        setLoading(false);
+      }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   // Fonctions d'action

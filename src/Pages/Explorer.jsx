@@ -34,6 +34,8 @@ const Explorer = () => {
 
   // 1. Charger le feed social au montage
   useEffect(() => {
+    let mounted = true;
+
     const fetchFeed = async () => {
       try {
         let queryBuilder = supabase
@@ -49,21 +51,26 @@ const Explorer = () => {
 
         const { data, error } = await queryBuilder;
 
+        if (!mounted) return;
         if (error) throw error;
+
         setFeedArticles(data || []);
       } catch (err) {
+        if (!mounted) return;
         if (err.name === 'AbortError' || err.message?.includes('aborted')) {
-          console.warn("Fetch aborted in Explorer:", err);
+          // Silent
         } else {
           console.error("Erreur chargement feed:", err);
         }
       } finally {
-        setLoadingFeed(false);
+        if (mounted) setLoadingFeed(false);
       }
     };
 
     fetchFeed();
-  }, []);
+
+    return () => { mounted = false; };
+  }, [user]); // Added user as dependency if we want to refresh when user logs in/out
 
   const handleSearch = async (e) => {
     e.preventDefault();

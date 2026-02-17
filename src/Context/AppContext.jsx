@@ -34,13 +34,15 @@ export const AppProvider = ({ children }) => {
 
   // --- 1. CHARGEMENT INITIAL (Depuis Supabase) ---
   useEffect(() => {
-    // On ne charge rien si pas d'utilisateur (évite les erreurs)
-    if (!user) {
-      setLoadingInitial(false);
-      return;
-    }
+    let mounted = true;
 
     const fetchUserData = async () => {
+      // 1. Pas d'utilisateur ? On arrête le chargement immédiatement
+      if (!user) {
+        if (mounted) setLoadingInitial(false);
+        return;
+      }
+
       try {
         setLoadingInitial(true);
         // On lance les 3 requêtes en parallèle pour la vitesse
@@ -50,6 +52,8 @@ export const AppProvider = ({ children }) => {
           supabase.from('playlists').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
         ]);
 
+        if (!mounted) return;
+
         if (articlesRes.error) throw articlesRes.error;
         if (favsRes.error) throw favsRes.error;
         if (playlistsRes.error) throw playlistsRes.error;
@@ -58,7 +62,6 @@ export const AppProvider = ({ children }) => {
         const formattedArticles = (articlesRes.data || []).map(article => ({
           ...article,
           detailed_analysis: { explanatory_sections: article.explanatory_sections },
-          fileUrl: article.file_path ? supabase.storage.from('pdfs').getPublicUrl(article.file_path).data.publicUrl : null
         }));
 
         const formattedFavs = (favsRes.data || []).map(f => f.articles).filter(Boolean);
@@ -68,17 +71,23 @@ export const AppProvider = ({ children }) => {
         setPlaylists(playlistsRes.data || []);
 
       } catch (error) {
+        if (!mounted) return;
+
         if (error.name === 'AbortError' || error.message?.includes('aborted')) {
-          console.warn('Supabase fetch aborted in AppContext:', error);
+          // Silent ignore
         } else {
           console.error('Erreur chargement données utilisateur:', error.message);
         }
       } finally {
-        setLoadingInitial(false);
+        if (mounted) setLoadingInitial(false);
       }
     };
 
     fetchUserData();
+
+    return () => {
+      mounted = false;
+    };
   }, [user]); // Rechargement si l'utilisateur change
 
   // --- 2. PROCESSUS D'UPLOAD COMPLET ---
@@ -142,7 +151,7 @@ export const AppProvider = ({ children }) => {
       const newArticleForState = {
         ...newArticleFromDb,
         detailed_analysis: { explanatory_sections: newArticleFromDb.explanatory_sections },
-        fileUrl: supabase.storage.from('pdfs').getPublicUrl(fileName).data.publicUrl
+        // fileUrl removed: Generated securely in ArticleDetail
       };
 
       setArticles(prev => [newArticleForState, ...prev]);

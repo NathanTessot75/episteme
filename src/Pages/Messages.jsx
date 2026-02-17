@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../Context/AuthContext';
-import { User, Send, MessageCircle } from 'lucide-react';
+import { User, Send, MessageCircle, ArrowUp } from 'lucide-react';
 import PageTransition from '../Components/PageTransition';
 
 const Messages = () => {
@@ -221,7 +221,7 @@ const Messages = () => {
                             </div>
 
                             {/* MESSAGES LIST */}
-                            <div className="flex-1 overflow-y-auto p-6 space-y-2 custom-scrollbar bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-50/50 via-transparent to-transparent dark:from-purple-900/10" ref={scrollRef}>
+                            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-50/50 via-transparent to-transparent dark:from-purple-900/10" ref={scrollRef}>
                                 {loadingMessages ? (
                                     <div className="flex justify-center items-center h-full">
                                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
@@ -236,22 +236,35 @@ const Messages = () => {
                                 ) : (
                                     messages.map((msg, idx) => {
                                         const isMe = msg.sender_id === user.id;
+                                        // Determine if this message is the last of a consecutive group
+                                        const nextMsg = messages[idx + 1];
+                                        const isLastInGroup = !nextMsg || nextMsg.sender_id !== msg.sender_id;
+
+                                        // Show avatar only if it's the first in group (or we could just show it at the bottom, but let's keep top for now as per previous logic, or maybe adjust?)
+                                        // Actually, Instagram usually shows avatar at the BOTTOM of the group. 
+                                        // Let's stick to the previous "header" style avatar for now, or simplify.
+                                        // The user asked for "corner not round" on the LAST message.
+                                        // Let's keep avatar logic simple: show if first of group.
                                         const showAvatar = idx === 0 || messages[idx - 1].sender_id !== msg.sender_id;
 
                                         return (
-                                            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} items-end gap-3 group animate-in slide-in-from-bottom-2 duration-500`}>
+                                            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} items-end gap-3 group animate-in slide-in-from-bottom-2 duration-500 ${isLastInGroup ? 'mb-4' : 'mb-1'}`}>
                                                 {!isMe && (
                                                     <div className={`w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-500 flex-shrink-0 ${showAvatar ? 'opacity-100' : 'opacity-0'}`}>
                                                         {selectedFriend.email?.charAt(0).toUpperCase()}
                                                     </div>
                                                 )}
 
-                                                <div className={`max-w-[70%] px-5 py-3.5 rounded-3xl text-sm leading-relaxed relative ${isMe
-                                                    ? 'bg-gradient-to-br from-purple-600 to-blue-600 text-white rounded-br-sm shadow-lg shadow-purple-500/20'
-                                                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-gray-100 dark:border-slate-700 rounded-bl-sm shadow-sm'
-                                                    }`}>
+                                                <div className={`max-w-[70%] px-5 py-3.5 rounded-3xl text-sm leading-relaxed relative 
+                                                    ${isMe
+                                                        ? 'bg-gradient-to-br from-purple-600 to-blue-600 text-white shadow-lg shadow-purple-500/20'
+                                                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-gray-100 dark:border-slate-700 shadow-sm'
+                                                    }
+                                                    ${isMe && isLastInGroup ? 'rounded-br-sm' : ''}
+                                                    ${!isMe && isLastInGroup ? 'rounded-bl-sm' : ''}
+                                                `}>
                                                     {msg.content}
-                                                    <span className={`text-[10px] absolute -bottom-5 ${isMe ? 'right-0 text-slate-400' : 'left-0 text-slate-400'} opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap`}>
+                                                    <span className={`text-[10px] absolute -bottom-5 ${isMe ? 'right-0 text-slate-400' : 'left-0 text-slate-400'} opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-20`}>
                                                         {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                     </span>
                                                 </div>
@@ -285,7 +298,7 @@ const Messages = () => {
                                         disabled={!newMessage.trim()}
                                         className="p-4 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-full hover:shadow-lg hover:shadow-purple-500/30 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed transition-all duration-300"
                                     >
-                                        <Send size={20} className={newMessage.trim() ? 'translate-x-[2px] -translate-y-[2px]' : ''} />
+                                        <ArrowUp size={20} />
                                     </button>
                                 </form>
                             </div>

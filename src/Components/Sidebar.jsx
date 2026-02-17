@@ -8,11 +8,10 @@ import { supabase } from '../supabaseClient';
 const Sidebar = () => {
   const { toggleTheme, darkMode } = useApp();
   const { user } = useAuth();
-
   const [unreadCount, setUnreadCount] = React.useState(0);
 
   React.useEffect(() => {
-    if (!user) return;
+    if (!user) return; // Wait for user
 
     // 1. Fetch initial count
     const fetchUnread = async () => {

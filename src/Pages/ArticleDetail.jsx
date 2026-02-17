@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Calendar, User, Eye, BookOpen, ExternalLink,
-  FileText, Sparkles, Heart, Layers, Plus, Check, X, Lightbulb, Info, Send, MessageCircle, Quote, Copy
+  FileText, Sparkles, Heart, Layers, Plus, Check, X, Lightbulb, Info, Send, MessageCircle, Quote, Copy, Lock, Globe, ArrowUp
 } from 'lucide-react';
 import { chatWithArticleAI } from '../Services/openaiService';
 import ReactMarkdown from 'react-markdown';
@@ -11,6 +11,7 @@ import { useAuth } from '../Context/AuthContext';
 import { supabase } from '../supabaseClient';
 import PageTransition from '../Components/PageTransition';
 import { motion, AnimatePresence } from 'framer-motion';
+import LinkAccountModal from '../Components/LinkAccountModal';
 
 const ArticleDetail = () => {
   const { id } = useParams();
@@ -35,52 +36,91 @@ const ArticleDetail = () => {
   const [fetchedArticle, setFetchedArticle] = useState(null);
   const [loadingArticle, setLoadingArticle] = useState(false);
 
+  // --- LINK ACCOUNT STATE ---
+  const [showLinkAccountModal, setShowLinkAccountModal] = useState(false);
+  const handlePremiumSuccess = () => {
+    setShowLinkAccountModal(false);
+    window.location.reload();
+  };
+
   // Priority: 1. Navigation State -> 2. Context (My Library) -> 3. Fetched Individually
   const article = featuredArticle || articles.find(a => a.id.toString() === id) || fetchedArticle;
 
   // Helper to identify static/demo articles vs real DB articles
   const isStaticFeatured = article?.id?.toString().startsWith('feat-');
 
+  const [pdfUrl, setPdfUrl] = useState(null);
+  const [pdfError, setPdfError] = useState(null);
+
   useEffect(() => {
-    // If we have the article from state or context, do the side-effects
-    // If we have the article from state or context, do the side-effects
+    // 1. Reset state when article changes
+    setPdfUrl(null);
+    setPdfError(null);
+
+    // 2. Determine source
     if (article) {
-      if (!isStaticFeatured) { // Only fetch user-specific data if it's a real DB article
-        fetchLikeData();
-        if (user) {
-          fetchPlaylists();
-          fetchChatHistory();
-        }
+      if (article.pdfUrl) {
+        // External link (Featured articles)
+        setPdfUrl(article.pdfUrl);
+      } else if (article.file_path) {
+        const fetchSignedUrl = async () => {
+          try {
+            const { data, error } = await supabase.storage
+              .from('pdfs')
+              .createSignedUrl(article.file_path, 3600);
+
+            if (error) throw error;
+            if (data) setPdfUrl(data.signedUrl);
+          } catch (err) {
+            if (err.name !== 'AbortError') {
+              console.error("Error creating signed URL:", err);
+              setPdfError("Accès refusé. Vous devez être Premium pour voir ce document.");
+            }
+          }
+        };
+        fetchSignedUrl();
       }
     } else {
-      // If we DON'T have the article, fetch it!
       const fetchArticleById = async () => {
-        setLoadingArticle(true);
-        const { data, error } = await supabase.from('articles').select('*').eq('id', id).single();
-        if (data) {
-          // Add fileUrl if needed
-          const withUrl = {
-            ...data,
-            fileUrl: data.file_path ? supabase.storage.from('pdfs').getPublicUrl(data.file_path).data.publicUrl : null
-          };
-          setFetchedArticle(withUrl);
+        try {
+          setLoadingArticle(true);
+          const { data, error } = await supabase.from('articles').select('*').eq('id', id).single();
+          if (error) throw error;
+          if (data) {
+            setFetchedArticle(data);
+          }
+        } catch (err) {
+          if (err.name !== 'AbortError') console.error("Error fetching article:", err);
+        } finally {
+          setLoadingArticle(false);
         }
-        setLoadingArticle(false);
       };
 
       fetchArticleById();
     }
-  }, [user, id, featuredArticle, articles]); // Added dependencies to re-run if needed
+
+    if (article && !isStaticFeatured) {
+      fetchLikeData();
+      if (user) {
+        fetchPlaylists();
+        fetchChatHistory();
+      }
+    }
+  }, [user, id, article]);
 
   const fetchLikeData = async () => {
     try {
-      const { count } = await supabase.from('favorites').select('*', { count: 'exact', head: true }).eq('article_id', article.id);
+      const { count, error } = await supabase.from('favorites').select('*', { count: 'exact', head: true }).eq('article_id', article.id);
+      if (error) throw error;
       setLikeCount(count || 0);
       if (user) {
-        const { data } = await supabase.from('favorites').select('id').eq('article_id', article.id).eq('user_id', user.id).maybeSingle();
+        const { data, error: userError } = await supabase.from('favorites').select('id').eq('article_id', article.id).eq('user_id', user.id).maybeSingle();
+        if (userError) throw userError;
         setIsLiked(!!data);
       }
-    } catch (error) { console.error(error); }
+    } catch (error) {
+      if (error.name !== 'AbortError') console.error(error);
+    }
   };
 
   const fetchChatHistory = async () => {
@@ -95,31 +135,30 @@ const ArticleDetail = () => {
       if (error) throw error;
       if (data) setChatMessages(data.map(msg => ({ role: msg.role, content: msg.content })));
     } catch (error) {
-      console.error("Error fetching chat history:", error);
+      if (error.name !== 'AbortError') console.error("Error fetching chat history:", error);
     }
   };
 
-  const toggleLike = async () => {
-    if (!user) return alert("Connectez-vous pour liker !");
-    if (isStaticFeatured) return alert("Article de démonstration (lecture seule).");
-    if (isLiked) {
-      const { error } = await supabase.from('favorites').delete().eq('article_id', article.id).eq('user_id', user.id);
-      if (!error) { setIsLiked(false); setLikeCount(prev => Math.max(0, prev - 1)); }
-    } else {
-      const { error } = await supabase.from('favorites').insert([{ article_id: article.id, user_id: user.id }]);
-      if (!error) { setIsLiked(true); setLikeCount(prev => prev + 1); }
-    }
-  };
 
   const fetchPlaylists = async () => {
-    const { data } = await supabase.from('playlists').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
-    if (data) setUserPlaylists(data);
+    try {
+      const { data, error } = await supabase.from('playlists').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
+      if (error) throw error;
+      if (data) setUserPlaylists(data);
+    } catch (err) {
+      if (err.name !== 'AbortError') console.error("Error fetching playlists:", err);
+    }
   };
 
   const createPlaylistAndAdd = async () => {
     if (!newPlaylistTitle.trim()) return;
-    const { data } = await supabase.from('playlists').insert([{ title: newPlaylistTitle, user_id: user.id }]).select().single();
-    if (data) { setUserPlaylists([data, ...userPlaylists]); setNewPlaylistTitle(""); addToPlaylist(data.id); }
+    try {
+      const { data, error } = await supabase.from('playlists').insert([{ title: newPlaylistTitle, user_id: user.id }]).select().single();
+      if (error) throw error;
+      if (data) { setUserPlaylists([data, ...userPlaylists]); setNewPlaylistTitle(""); addToPlaylist(data.id); }
+    } catch (err) {
+      console.error("Error creating playlist:", err);
+    }
   };
 
   const addToPlaylist = async (playlistId) => {
@@ -127,6 +166,51 @@ const ArticleDetail = () => {
     const { error } = await supabase.from('playlist_items').insert([{ playlist_id: playlistId, article_id: article.id }]);
     if (error) setFeedbackMsg(error.code === '23505' ? "Déjà dans cette collection !" : "Erreur ajout.");
     else { setFeedbackMsg("Ajouté avec succès !"); setTimeout(() => { setShowPlaylistModal(false); setFeedbackMsg(""); }, 1000); }
+  };
+
+  const toggleLike = async () => {
+    if (!user) {
+      alert("Connectez-vous pour aimer cet article !");
+      return;
+    }
+
+    if (isStaticFeatured) {
+      alert("Action impossible sur un article de démonstration.");
+      return;
+    }
+
+    // Optimistic update
+    const previousLiked = isLiked;
+    // const previousCount = likeCount; // Not used currently but good for rollback
+
+    setIsLiked(!isLiked);
+    setLikeCount(prev => isLiked ? prev - 1 : prev + 1);
+
+    try {
+      if (previousLiked) {
+        // Unlike: remove from favorites
+        const { error } = await supabase
+          .from('favorites')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('article_id', article.id);
+
+        if (error) throw error;
+      } else {
+        // Like: add to favorites
+        const { error } = await supabase
+          .from('favorites')
+          .insert([{ user_id: user.id, article_id: article.id }]);
+
+        if (error) throw error;
+      }
+    } catch (error) {
+      console.error("Error toggling like:", error);
+      // Revert optimization
+      setIsLiked(previousLiked);
+      setLikeCount(prev => previousLiked ? prev + 1 : prev - 1);
+      alert("Erreur lors de la mise à jour du like.");
+    }
   };
 
   // --- CITATION LOGIC ---
@@ -390,12 +474,32 @@ const ArticleDetail = () => {
         {/* PDF */}
         <div className="mt-12 pt-10 border-t border-gray-200 dark:border-slate-800">
           <div className="flex items-center gap-2 font-bold text-xl mb-6 dark:text-white"><Eye className="text-gray-400" /><h3>Document original</h3></div>
-          {article.fileUrl || article.pdfUrl ? (
-            <div className="bg-gray-800 rounded-xl overflow-hidden h-[800px]"><iframe src={article.fileUrl || article.pdfUrl} className="w-full h-full" title="PDF" /></div>
-          ) : <div className="p-6 bg-gray-50 dark:bg-slate-800 text-center rounded-xl dark:text-slate-400">Non disponible.</div>}
+
+          {pdfUrl ? (
+            <div className="bg-gray-800 rounded-xl overflow-hidden h-[800px]"><iframe src={pdfUrl} className="w-full h-full" title="PDF" /></div>
+          ) : pdfError ? (
+            <div className="p-12 bg-red-50 dark:bg-red-900/20 text-center rounded-xl border border-red-100 dark:border-red-900/50">
+              <div className="inline-flex p-3 bg-red-100 dark:bg-red-900/40 rounded-full text-red-600 dark:text-red-400 mb-4">
+                <Lock size={32} />
+              </div>
+              <h3 className="text-xl font-bold text-red-800 dark:text-red-300 mb-2">Accès restreint</h3>
+              <p className="text-red-600 dark:text-red-400 mb-6">{pdfError}</p>
+              <button
+                onClick={() => setShowLinkAccountModal(true)}
+                className="px-6 py-3 bg-red-600 text-white font-bold rounded-full hover:bg-red-700 transition-colors shadow-lg hover:shadow-xl transform hover:-translate-y-1 flex items-center justify-center gap-2 mx-auto"
+              >
+                <Globe size={20} /> Lier un compte académique
+              </button>
+            </div>
+          ) : (
+            <div className="p-6 bg-gray-50 dark:bg-slate-800 text-center rounded-xl dark:text-slate-400">
+              {article?.file_path ? "Chargement du document sécurisé..." : "Non disponible."}
+            </div>
+          )}
         </div>
 
         {/* MODAL */}
+
         {showPlaylistModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setShowPlaylistModal(false)}>
             <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
@@ -522,12 +626,19 @@ const ArticleDetail = () => {
                   disabled={!chatInput.trim() || chatLoading}
                   className="p-2 bg-purple-600 text-white rounded-full hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Send size={18} />
+                  <ArrowUp size={20} />
                 </button>
               </form>
             </motion.div>
           )}
         </AnimatePresence>
+
+        {showLinkAccountModal && (
+          <LinkAccountModal
+            onClose={() => setShowLinkAccountModal(false)}
+            onSuccess={handlePremiumSuccess}
+          />
+        )}
 
       </div>
     </PageTransition>

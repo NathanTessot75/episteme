@@ -26,10 +26,18 @@ const Auth = () => {
         if (error) throw error;
         navigate('/'); 
       } else {
-        const { error } = await signUp(email, password);
+        const { error, data } = await signUp(email, password);
         if (error) throw error;
-        alert("Compte créé ! Vérifiez vos emails ou connectez-vous.");
-        setIsLogin(true);
+        
+        // Supabase sign_up with `confirm_email: false` automatically signs user in and returns session.
+        if (data.session) {
+          navigate('/');
+        } else {
+          // Fallback just in case user is not automatically signed in by Supabase
+          const { error: signInError } = await signIn(email, password);
+          if (signInError) throw signInError;
+          navigate('/');
+        }
       }
     } catch (err) {
       setError(err.message);

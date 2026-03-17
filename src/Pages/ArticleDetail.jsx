@@ -15,7 +15,7 @@ import LinkAccountModal from '../Components/LinkAccountModal';
 
 const ArticleDetail = () => {
   const { id } = useParams();
-  const { articles, loadingInitial } = useApp();
+  const { articles, loadingInitial, favorites, setFavorites } = useApp();
   const { user } = useAuth();
   const location = useLocation();
   const featuredArticle = location.state?.article;
@@ -196,6 +196,7 @@ const ArticleDetail = () => {
           .eq('article_id', article.id);
 
         if (error) throw error;
+        setFavorites(prev => prev.filter(f => f.id !== article.id));
       } else {
         // Like: add to favorites
         const { error } = await supabase
@@ -203,6 +204,7 @@ const ArticleDetail = () => {
           .insert([{ user_id: user.id, article_id: article.id }]);
 
         if (error) throw error;
+        setFavorites(prev => [article, ...prev]);
       }
     } catch (error) {
       console.error("Error toggling like:", error);

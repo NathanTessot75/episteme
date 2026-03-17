@@ -596,7 +596,7 @@ const ArticleDetail = () => {
                       ? 'bg-purple-600 text-white rounded-br-none'
                       : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700 rounded-bl-none'
                       }`}>
-                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <div className={msg.role === 'user' ? "max-w-none text-white [&_p]:text-white" : "prose prose-sm dark:prose-invert max-w-none"}>
                         <ReactMarkdown>{msg.content}</ReactMarkdown>
                       </div>
                     </div>

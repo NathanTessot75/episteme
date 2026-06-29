@@ -1,16 +1,69 @@
-# React + Vite
+# Episteme
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Comprenez la science en un clin d'œil.**
 
-Currently, two official plugins are available:
+Episteme est une application web qui transforme n'importe quel article scientifique PDF en une explication claire et structurée, générée par IA. Déposez un PDF, et l'application le lit, l'analyse et vous le restitue comme un professeur — avec bibliothèque personnelle, playlists, et espace social.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## Fonctionnalités
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Analyse IA de PDFs** — Déposez un article scientifique, l'IA extrait les concepts clés et génère une explication pédagogique
+- **Bibliothèque personnelle** — Retrouvez tous vos articles analysés dans un espace dédié
+- **Playlists** — Organisez vos articles en collections thématiques
+- **Explorateur** — Découvrez des articles partagés par d'autres utilisateurs
+- **Profils & Messages** — Espace social pour suivre d'autres lecteurs et échanger
+- **Dark mode** — Interface claire ou sombre selon vos préférences
+- **Animations fluides** — Transitions de pages avec Framer Motion
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Stack technique
+
+| Couche | Technologie |
+|--------|-------------|
+| Frontend | React 18, Vite |
+| Style | Tailwind CSS |
+| Animations | Framer Motion |
+| Backend / Auth / BDD | Supabase (PostgreSQL, RLS, Auth) |
+| Déploiement | Vercel |
+
+---
+
+## Installation
+
+```bash
+git clone https://github.com/NathanTessot75/episteme.git
+cd episteme
+npm install
+```
+
+Créez un fichier `.env` à la racine :
+
+```env
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_ANON_KEY=your_anon_key
+```
+
+```bash
+npm run dev
+# → http://localhost:5173
+```
+
+---
+
+## Structure
+
+```
+src/
+├── Pages/          # Home, Library, Explorer, ArticleDetail, Auth, Profile, Messages, PlaylistDetail
+├── Components/     # Sidebar, PageTransition, ...
+├── Context/        # AppContext (état global, logique IA)
+└── api/            # Appels Supabase
+```
+
+---
+
+## Licence
+
+© 2026 Nathan Tessot — Tous droits réservés.

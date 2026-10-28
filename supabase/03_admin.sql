@@ -6,8 +6,7 @@ DROP FUNCTION IF EXISTS public.handle_verification_request;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
 
 -- 3. Policy: Allow Admins to View/Update ALL Requests
--- First, drop the "view own" policy to replace/augment it? 
--- Actually, we can keep "view own" and add "admin view all".
+-- (The "view own" policy is kept; this adds "admin view all".)
 CREATE POLICY "Admins can view all requests"
   ON verification_requests FOR SELECT
   TO authenticated
@@ -28,7 +27,5 @@ CREATE POLICY "Admins can update requests"
     )
   );
 
--- 4. Set YOU as Admin (Optional Check)
--- Since we don't know your ID here, you'll have to run:
+-- 4. Grant admin rights to an account (run manually with the right user id):
 -- UPDATE profiles SET is_admin = true WHERE id = 'YOUR_USER_ID';
--- Or we can try to guess/set the first user? No, safer to ask you.
